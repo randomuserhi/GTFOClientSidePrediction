@@ -26,7 +26,6 @@ namespace ClientSidePrediction {
         }
     }*/
 
-    // TODO(randomuserhi): Fix
     [HarmonyPatch]
     internal class Prediction {
         private unsafe static Interpolate Patch_Interpolate = Patch;
