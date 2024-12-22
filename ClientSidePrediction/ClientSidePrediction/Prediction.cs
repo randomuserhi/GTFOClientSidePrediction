@@ -1,4 +1,5 @@
 ﻿using BepInEx.Unity.IL2CPP.Hook;
+using HarmonyLib;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.Runtime;
 using Il2CppInterop.Runtime.Runtime.VersionSpecific.Class;
@@ -7,6 +8,26 @@ using System.Runtime.InteropServices;
 using UnityEngine;
 
 namespace ClientSidePrediction {
+    /*[HarmonyPatch]
+    internal class TonguePrediction : MonoBehaviour {
+        // AgentAbility.Melee, base.m_ai.m_enemyAgent.EnemyBehaviorData.MeleeAttackDistance.Max
+
+        [HarmonyPatch(typeof(EnemySync), nameof(EnemySync.UpdateStateData))]
+        [HarmonyPostfix]
+        private static void OnUpdate(EnemySync __instance) {
+            EnemyAgent agent = __instance.m_agent;
+            EB_InCombat? combat = agent.AI.m_behaviour.TryCast<EB_InCombat>();
+            if (combat == null) return;
+
+            if (combat.CheckAbilityReady(AgentAbility.Melee, agent.EnemyBehaviorData.MeleeAttackDistance.Max)) {
+                APILogger.Warn("bruh");
+                agent.Locomotion.StrikerAttack.ActivateState(agent.AI.Target.m_agent, AgentAbility.Melee, agent.Locomotion.StrikerAttack.m_lastAttackIndex);
+            }
+        }
+    }*/
+
+    // TODO(randomuserhi): Fix
+    [HarmonyPatch]
     internal class Prediction {
         private unsafe static Interpolate Patch_Interpolate = Patch;
 #pragma warning disable CS8618
@@ -30,15 +51,15 @@ namespace ClientSidePrediction {
             PositionSnapshotBuffer<pES_PathMoveData> snapshotBuffer = new PositionSnapshotBuffer<pES_PathMoveData>(_thisPtr);
             Il2CppSystem.Collections.Generic.List<pES_PathMoveData> buffer = snapshotBuffer.m_buffer;
             if (buffer.Count <= 1) return position;
-            float ping = Mathf.Min(LatencyTracker.Ping, 1f);
+
+            float ping = Mathf.Min(LatencyTracker.Ping, 1f) / 2.0f;
             if (ping < 0) return position;
 
             pES_PathMoveData a = buffer[buffer.Count - 1];
             pES_PathMoveData b = buffer[buffer.Count - 2];
             Vector3 dir = b.Position - a.Position;
 
-            // A tick seems to represent every 10ms => should make configurable in case this changes
-            float dt = (b.Tick - a.Tick) / 100.0f;
+            const float dt = 0.1f;
 
             *position = *position + dir / dt * ping;
             return position;
