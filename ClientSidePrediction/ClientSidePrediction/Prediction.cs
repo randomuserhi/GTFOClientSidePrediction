@@ -12,59 +12,6 @@ using UnityEngine;
 using UnityEngine.AI;
 
 namespace ClientSidePrediction {
-    /*[HarmonyPatch]
-    internal class MovementPrediction : MonoBehaviour {
-        [HarmonyPatch(typeof(EnemySync), nameof(EnemySync.OnSpawn))]
-        [HarmonyPostfix]
-        private static void OnSpawn(EnemySync __instance) {
-            if (!__instance.m_agent.gameObject.GetComponent<MovementPrediction>()) {
-                MovementPrediction sync = __instance.m_agent.gameObject.AddComponent<MovementPrediction>();
-                sync.enemy = __instance.m_agent;
-                sync.pathmove = __instance.m_agent.Locomotion.PathMove.TryCast<ES_PathMove>();
-            }
-        }
-
-        public EnemyAgent? enemy;
-        public ES_PathMove? pathmove;
-        private Vector3 prevPos = Vector3.zero;
-        private Vector3 oldVel = Vector3.zero;
-        private static float lerpFactor = 7.5f;
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static Vector3 ExpDecay(Vector3 a, Vector3 b, float decay, float dt) {
-            return b + (a - b) * Mathf.Exp(-decay * dt);
-        }
-
-        private void Update() {
-            if (SNet.IsMaster) return;
-            if (enemy == null || pathmove == null) return;
-            if (pathmove.m_positionBuffer.m_buffer.Count < 1) return;
-
-            Vector3 pos = pathmove.m_positionBuffer.m_buffer[pathmove.m_positionBuffer.m_buffer.Count - 1].Position;
-
-            long now = LatencyTracker.Now;
-            Vector3 vel = (pos - prevPos) / Time.deltaTime;
-            prevPos = pos;
-
-            float ping = Mathf.Min(LatencyTracker.Ping, 1f) / 2.0f;
-            if (ping <= 0) return;
-
-            if ((pos - prevPos).sqrMagnitude > 5) {
-                // If moved very far, then must be TP, no prediction...
-                return;
-            }
-
-            if (Vector3.Dot(oldVel, vel) < 0) {
-                // If the player switches direction, reset sent pos to prevent lag in forecast
-                enemy.Position = pos;
-            }
-            oldVel = vel;
-
-            Vector3 target = pos + vel * ping;
-            enemy.Position = ExpDecay(enemy.Position, target, lerpFactor * Mathf.Max((enemy.Position - target).sqrMagnitude, 1.0f), Time.deltaTime);
-        }
-    }*/
-
     [HarmonyPatch]
     internal class Prediction {
         [HarmonyPatch(typeof(RundownManager), nameof(RundownManager.EndGameSession))]
@@ -155,7 +102,7 @@ namespace ClientSidePrediction {
 
         [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.CommonEnter))]
         [HarmonyPrefix]
-        private static void ES_PATHMOVE(ES_PathMove __instance) {
+        private static void ES_PathMove_CommonEnter(ES_PathMove __instance) {
             if (SNet.IsMaster) return;
 
             IntPtr ptr = __instance.m_positionBuffer.Pointer;

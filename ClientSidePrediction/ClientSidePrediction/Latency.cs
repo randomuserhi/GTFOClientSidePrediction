@@ -115,30 +115,6 @@ namespace ClientSidePrediction {
             ping = Mathf.Clamp(alpha * ping + (1.0f - alpha) * target, 0f, 1000.0f);
         }
 
-
-        /*[HarmonyPatch(typeof(PUI_GameEventLog), nameof(PUI_GameEventLog.AddLogItem))]
-        [HarmonyPrefix]
-        private static void ReceivedMessage() {
-            if (expecting == false) return;
-
-            long receive = Now;
-
-            const float alpha = 0.75f;
-            ping = alpha * ping + (1.0f - alpha) * (receive - send);
-
-            if (ping < 0) {
-                ping = 0;
-            }
-            expecting = false;
-        }
-
-        [HarmonyPatch(typeof(PlayerChatManager), nameof(PlayerChatManager.PostMessage))]
-        [HarmonyPrefix]
-        private static void SendMessage() {
-            send = Now;
-            expecting = true;
-        }*/
-
         [HarmonyPatch(typeof(PUI_LocalPlayerStatus), nameof(PUI_LocalPlayerStatus.UpdateBPM))]
         [HarmonyWrapSafe]
         [HarmonyPostfix]

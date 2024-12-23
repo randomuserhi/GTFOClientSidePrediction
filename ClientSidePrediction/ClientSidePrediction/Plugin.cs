@@ -6,7 +6,6 @@ using Il2CppInterop.Runtime.Injection;
 using UnityEngine;
 
 // TODO(randomuserhi): predict animations
-// TODO(randomuserhi): automatic ping detection cause rn using chat is stupid
 
 namespace ClientSidePrediction.BepInEx;
 
@@ -20,7 +19,6 @@ public class Plugin : BasePlugin {
         APILogger.Log("Debug is " + (ConfigManager.Debug ? "Enabled" : "Disabled"));
 
         ClassInjector.RegisterTypeInIl2Cpp<LatencyTracker>();
-        //ClassInjector.RegisterTypeInIl2Cpp<MovementPrediction>();
 
         RundownManager.OnExpeditionGameplayStarted += (Action)LatencyTracker.OnGameplayStarted;
 
