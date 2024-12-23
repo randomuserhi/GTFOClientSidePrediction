@@ -11,27 +11,114 @@ namespace ClientSidePrediction {
         public static float Ping => (SNet.Master == null || SNet.IsMaster) ? 0 : ping / 1000.0f;
 
         public static long Now => ((DateTimeOffset)DateTime.Now).ToUnixTimeMilliseconds();
-        private static long send = 0;
-        private static bool expecting = false;
+        private static long sendTime = 0;
+        private static int index = 0;
+        private static bool expected = false;
+        private static bool running = false;
 
-        private float timer = 0;
-        public void Update() {
-            if (SNet.Master == null || SNet.IsMaster) {
-                return;
-            }
+        private static pNavMarkerState visibleState = default;
+        private static float markerHideTimer = 0;
+        private static bool show = false;
 
-            timer += Time.deltaTime;
-            if (timer > 1) {
-                send = Now;
-                expecting = true;
-                PlayerChatManager.WantToSentTextMessage(PlayerManager.GetLocalPlayerAgent(), "Ping Check...");
-                timer = 0;
+        private static float timer = 0;
+
+        public static void OnGameplayStarted() {
+            timer = 0;
+            running = true;
+            visibleState.status = eNavMarkerStatus.Hidden;
+        }
+
+        [HarmonyPatch(typeof(RundownManager), nameof(RundownManager.EndGameSession))]
+        [HarmonyPrefix]
+        private static void EndGameSession() {
+            running = false;
+        }
+
+        [HarmonyPatch(typeof(SNet_SessionHub), nameof(SNet_SessionHub.LeaveHub))]
+        [HarmonyPrefix]
+        private static void LeaveHub() {
+            running = false;
+        }
+
+        [HarmonyPatch(typeof(GuiManager), nameof(GuiManager.AttemptSetPlayerPingStatus))]
+        [HarmonyPrefix]
+        private static void GuiManagerHide(PlayerAgent sourceAgent, bool visible, Vector3 worldPos, eNavMarkerStyle style) {
+            if (!visible) {
+                markerHideTimer = Clock.Time - 1;
+                visibleState.status = eNavMarkerStatus.Hidden;
+            } else {
+                show = false;
             }
         }
 
-        [HarmonyPatch(typeof(PUI_GameEventLog), nameof(PUI_GameEventLog.AddLogItem))]
+        [HarmonyPatch(typeof(LocalPlayerAgent), nameof(LocalPlayerAgent.Update))]
         [HarmonyPrefix]
-        public static void ReceivedMessage() {
+        private static void Update(LocalPlayerAgent __instance) {
+            if (SNet.IsMaster) return;
+            if (!running) return;
+
+            index = __instance.Owner.PlayerSlotIndex();
+            var pingManager = GuiManager.Current.m_playerPings[index];
+
+            timer += Time.deltaTime;
+            if (timer > 1) {
+                timer = 0;
+
+                if (Clock.Time > markerHideTimer) {
+                    visibleState.status = eNavMarkerStatus.Hidden;
+
+                    if (!expected && visibleState.status == eNavMarkerStatus.Hidden) {
+                        pNavMarkerInteraction pingPacket = default;
+                        pingPacket.type = eNavMarkerInteractionType.Hide;
+
+                        sendTime = Now;
+                        expected = true;
+                        pingManager.m_stateReplicator.AttemptInteract(pingPacket);
+                    }
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(SyncedNavMarkerWrapper), nameof(SyncedNavMarkerWrapper.OnStateChange))]
+        [HarmonyPrefix]
+        private static void OnRecievePingStatus(SyncedNavMarkerWrapper __instance, pNavMarkerState oldState, pNavMarkerState newState, bool isDropinState) {
+            if (SNet.IsMaster) return;
+            if (!running) return;
+            if (__instance.m_playerIndex != index) return;
+
+            if (!show && Clock.Time > markerHideTimer && newState.status == eNavMarkerStatus.Visible) {
+                visibleState = newState;
+                markerHideTimer = Clock.Time + __instance.AutoHideDelay;
+                show = true;
+                expected = false;
+                return;
+            } else if (show && Clock.Time <= markerHideTimer && newState.status == eNavMarkerStatus.Hidden && visibleState.status == eNavMarkerStatus.Visible) {
+                expected = false;
+                pNavMarkerInteraction pingPacket = default;
+                pingPacket.type = eNavMarkerInteractionType.Show;
+                pingPacket.style = visibleState.style;
+                pingPacket.worldPos = visibleState.worldPos;
+                pingPacket.terminalItemId = visibleState.terminalItemId;
+
+                __instance.m_stateReplicator.AttemptInteract(pingPacket);
+                return;
+            }
+
+            if (!expected) return;
+
+            expected = false;
+
+            long receiveTime = Now;
+
+            float target = receiveTime - sendTime;
+            const float alpha = 0.5f;
+            ping = Mathf.Clamp(alpha * ping + (1.0f - alpha) * target, 0f, 1000.0f);
+        }
+
+
+        /*[HarmonyPatch(typeof(PUI_GameEventLog), nameof(PUI_GameEventLog.AddLogItem))]
+        [HarmonyPrefix]
+        private static void ReceivedMessage() {
             if (expecting == false) return;
 
             long receive = Now;
@@ -47,10 +134,10 @@ namespace ClientSidePrediction {
 
         [HarmonyPatch(typeof(PlayerChatManager), nameof(PlayerChatManager.PostMessage))]
         [HarmonyPrefix]
-        public static void SendMessage() {
+        private static void SendMessage() {
             send = Now;
             expecting = true;
-        }
+        }*/
 
         [HarmonyPatch(typeof(PUI_LocalPlayerStatus), nameof(PUI_LocalPlayerStatus.UpdateBPM))]
         [HarmonyWrapSafe]

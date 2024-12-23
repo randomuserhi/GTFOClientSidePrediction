@@ -8,7 +8,7 @@ namespace ClientSidePrediction {
     // TODO(randomuserhi): Fix
     [HarmonyPatch]
     internal class Forecast {
-        public static float lerpFactor = 7.5f;
+        private static float lerpFactor = 7.5f;
         private static Vector3 sentPos = Vector3.zero;
         private static Vector3 prevPos = Vector3.zero;
         private static Vector3 oldVel = Vector3.zero;
@@ -37,7 +37,7 @@ namespace ClientSidePrediction {
             prevTimestamp = now;
 
             float ping = Mathf.Min(LatencyTracker.Ping, 1f) / 2.0f;
-            if (ping < 0) return;
+            if (ping <= 0) return;
 
             if ((pos - prevPos).sqrMagnitude > 5) {
                 // If moved very far, then must be TP, no forecasting...
@@ -51,9 +51,9 @@ namespace ClientSidePrediction {
             oldVel = vel;
 
             Vector3 target = pos + vel * ping;
-            sentPos = ExpDecay(sentPos, target, lerpFactor * Mathf.Max((sentPos - target).sqrMagnitude / 0.5f, 1.0f), dt);
+            sentPos = ExpDecay(sentPos, target, lerpFactor * Mathf.Max((sentPos - target).magnitude, 1.0f), dt);
 
-            // Fix y cause gravity is funky
+            // Fix y cause predicting gravity is funky
             sentPos.y = pos.y;
 
             pos = sentPos;

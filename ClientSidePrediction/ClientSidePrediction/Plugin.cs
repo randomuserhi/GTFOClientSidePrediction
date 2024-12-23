@@ -20,7 +20,9 @@ public class Plugin : BasePlugin {
         APILogger.Log("Debug is " + (ConfigManager.Debug ? "Enabled" : "Disabled"));
 
         ClassInjector.RegisterTypeInIl2Cpp<LatencyTracker>();
-        //ClassInjector.RegisterTypeInIl2Cpp<TonguePrediction>();
+        //ClassInjector.RegisterTypeInIl2Cpp<MovementPrediction>();
+
+        RundownManager.OnExpeditionGameplayStarted += (Action)LatencyTracker.OnGameplayStarted;
 
         new GameObject().AddComponent<LatencyTracker>();
         new Prediction();
