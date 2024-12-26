@@ -57,6 +57,7 @@ namespace ClientSidePrediction {
             public long prevTimestamp;
             public int lastAnimIndex = 0;
             public float triggeredTongue = 0;
+            public float lastSound = 0;
 
             // public GameObject marker;
 
@@ -73,6 +74,30 @@ namespace ClientSidePrediction {
         }
 
         public static Dictionary<IntPtr, EnemyData> map = new Dictionary<IntPtr, EnemyData>();
+
+        [HarmonyPatch(typeof(ES_StrikerAttack), nameof(ES_StrikerAttack.OnAttackWindUp))]
+        [HarmonyPrefix]
+        private static bool ES_StrikerAttack_OnAttackWindUp(ES_StrikerAttack __instance, int attackIndex, AgentAbility abilityType, int abilityIndex) {
+            if (SNet.IsMaster) return true;
+
+            var pathmove = __instance.m_enemyAgent.Locomotion.PathMove.TryCast<ES_PathMove>();
+            if (pathmove == null) return true;
+
+            IntPtr ptr = pathmove.m_positionBuffer.Pointer;
+
+            if (!map.ContainsKey(ptr)) return true;
+
+            EnemyData enemy = map[ptr];
+            if (Clock.Time < enemy.lastSound + 0.5f) {
+                __instance.m_tentacleAbility = __instance.m_ai.m_enemyAgent.Abilities.GetAbility(abilityType).Cast<EAB_MovingEnemeyTentacle>();
+                __instance.m_locomotion.m_animator.CrossFadeInFixedTime(EnemyLocomotion.s_hashAbilityFires[attackIndex], __instance.m_enemyAgent.EnemyMovementData.BlendIntoAttackAnim);
+                __instance.m_enemyAgent.Appearance.InterpolateGlow(__instance.m_attackGlowColor, __instance.m_attackGlowLocationEnd, __instance.m_attackWindupDuration * 1.2f);
+                return false;
+            }
+
+            enemy.lastSound = Clock.Time;
+            return true;
+        }
 
         [HarmonyPatch(typeof(EnemySync), nameof(EnemySync.OnSpawn))]
         [HarmonyPostfix]
