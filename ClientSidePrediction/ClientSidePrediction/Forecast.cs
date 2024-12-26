@@ -12,7 +12,9 @@ namespace ClientSidePrediction {
         private static Vector3 sentPos = Vector3.zero;
         private static Vector3 prevPos = Vector3.zero;
         private static Vector3 oldVel = Vector3.zero;
+        private static CharacterController? characterController = null;
         private static long prevTimestamp = 0;
+        //private static GameObject? marker;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static Vector3 ExpDecay(Vector3 a, Vector3 b, float decay, float dt) {
@@ -53,8 +55,39 @@ namespace ClientSidePrediction {
             Vector3 target = pos + vel * ping;
             sentPos = ExpDecay(sentPos, target, lerpFactor * Mathf.Max((sentPos - target).magnitude, 1.0f), dt);
 
-            // Fix y cause predicting gravity is funky
-            sentPos.y = pos.y;
+            // adjust sent pos based on collision
+            if (characterController == null) {
+                characterController = __instance.m_agent.Cast<LocalPlayerAgent>().m_playerCharacterController.m_characterController;
+            }
+            if (characterController == null) return;
+            Vector3 prev = characterController.transform.position;
+
+            if (!characterController.isGrounded) {
+                // Fix y cause predicting gravity is funky
+                sentPos.y = pos.y;
+            }
+
+            characterController.Move(sentPos - pos);
+            sentPos = characterController.transform.position;
+            characterController.transform.position = prev;
+
+            /*
+            const float height = 1.85f;
+            const float skinDepth = 0.01f;
+            const float radius = 0.5f;
+            RaycastHit hit;
+            if (Physics.CapsuleCast(sentPos + Vector3.up * radius, pos + Vector3.up * (height - radius), radius - skinDepth, slide, out hit, slide.magnitude)) {
+                sentPos = slide.normalized * hit.distance;
+            }
+            */
+
+            /*if (marker == null) {
+                marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                marker.GetComponent<Collider>().enabled = false;
+                marker.transform.localScale = new Vector3(0.5f, 0.5f, 0.5f);
+                marker.GetComponent<MeshRenderer>().material.color = Color.yellow;
+            }
+            marker.transform.position = sentPos;*/
 
             pos = sentPos;
         }

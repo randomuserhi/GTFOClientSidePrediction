@@ -1,10 +1,13 @@
-﻿using BepInEx.Unity.IL2CPP.Hook;
+﻿using Agents;
+using BepInEx.Unity.IL2CPP.Hook;
 using Enemies;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.Runtime;
 using Il2CppInterop.Runtime.Runtime.VersionSpecific.Class;
 using Il2CppInterop.Runtime.Runtime.VersionSpecific.MethodInfo;
+using Player;
+using ShaderValueAnimation;
 using SNetwork;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -26,29 +29,50 @@ namespace ClientSidePrediction {
             map.Clear();
         }
 
+        // Fix glow issue:
+        [HarmonyPatch(typeof(Vector4Transition), nameof(Vector4Transition.FeedMaterial))]
+        [HarmonyPostfix]
+        private static void FeedMaterial(Vector4Transition __instance) {
+            if (float.IsNaN(__instance.m_start.x) || float.IsNaN(__instance.m_start.y) || float.IsNaN(__instance.m_start.z) || float.IsNaN(__instance.m_start.w)) {
+                __instance.m_start = Vector4.zero;
+            }
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static Vector3 ExpDecay(Vector3 a, Vector3 b, float decay, float dt) {
             return b + (a - b) * Mathf.Exp(-decay * dt);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static float ExpDecay(float a, float b, float decay, float dt) {
+            return b + (a - b) * Mathf.Exp(-decay * dt);
+        }
+
         public class EnemyData {
             public EnemyAgent agent;
+            public NavMeshAgent navMeshAgent;
+            public EnemyAI ai;
             public Vector3 prevPos = Vector3.zero;
             public Vector3 vel = Vector3.zero;
-            //public GameObject test;
             public long prevTimestamp;
+            public int lastAnimIndex = 0;
+            public float triggeredTongue = 0;
+
+            // public GameObject marker;
 
             public EnemyData(EnemyAgent agent) {
                 this.agent = agent;
-                /*test = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                test.GetComponent<Collider>().enabled = false;
-                test.transform.localScale = new Vector3(0.5f, 0.5f, 0.5f);
-                test.GetComponent<MeshRenderer>().material.color = Color.red;*/
+                ai = agent.AI;
+                navMeshAgent = agent.AI.m_navMeshAgent.Cast<NavMeshAgentExtention.NavMeshAgentProxy>().m_agent;
+
+                /*marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                marker.GetComponent<Collider>().enabled = false;
+                marker.transform.localScale = new Vector3(0.5f, 0.5f, 0.5f);
+                marker.GetComponent<MeshRenderer>().material.color = Color.blue;*/
             }
         }
 
         public static Dictionary<IntPtr, EnemyData> map = new Dictionary<IntPtr, EnemyData>();
-
 
         [HarmonyPatch(typeof(EnemySync), nameof(EnemySync.OnSpawn))]
         [HarmonyPostfix]
@@ -100,9 +124,35 @@ namespace ClientSidePrediction {
 
         private static float lerpFactor = 5f;
 
-        [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.CommonEnter))]
+        [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.RecieveStateData))]
         [HarmonyPrefix]
-        private static void ES_PathMove_CommonEnter(ES_PathMove __instance) {
+        private static bool ES_PathMove_RecieveStateData(ES_PathMove __instance, pES_PathMoveData incomingData) {
+            if (SNet.IsMaster) return true;
+
+            float ping = Mathf.Min(LatencyTracker.Ping, 1f) / 2.0f;
+            if (ping <= 0) return true;
+
+            IntPtr ptr = __instance.m_positionBuffer.Pointer;
+
+            if (!map.ContainsKey(ptr)) return true;
+
+            EnemyData enemy = map[ptr];
+            if (Clock.Time < enemy.triggeredTongue + 3.0f) {
+                long now = LatencyTracker.Now;
+                float dt = (now - enemy.prevTimestamp) / 1000.0f;
+                enemy.prevTimestamp = now;
+
+                lerpFactor = 1f;
+                __instance.m_positionBuffer.Push(incomingData);
+                return false;
+            }
+
+            return true;
+        }
+
+        [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.SyncEnter))]
+        [HarmonyPostfix]
+        private static void ES_PathMove_SyncEnter(ES_PathMove __instance) {
             if (SNet.IsMaster) return;
 
             IntPtr ptr = __instance.m_positionBuffer.Pointer;
@@ -114,6 +164,69 @@ namespace ClientSidePrediction {
             enemy.prevPos = __instance.m_enemyAgent.Position;
             enemy.prevTimestamp = LatencyTracker.Now;
             enemy.vel = Vector3.zero;
+
+            enemy.ai.m_navMeshAgent.enabled = true;
+        }
+
+        [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.SyncUpdate))]
+        [HarmonyPostfix]
+        private static void ES_PathMove_SyncUpdate(ES_PathMove __instance) {
+            if (SNet.IsMaster) return;
+
+            IntPtr ptr = __instance.m_positionBuffer.Pointer;
+
+            if (!map.ContainsKey(ptr)) return;
+
+            EnemyData enemy = map[ptr];
+            PlayerAgent player = PlayerManager.GetLocalPlayerAgent();
+
+            float dist = enemy.agent.EnemyBehaviorData.MeleeAttackDistance.Max * 1.05f;
+            float sqrDist = dist * dist;
+            if ((enemy.agent.Position - player.transform.position).sqrMagnitude > sqrDist && enemy.triggeredTongue != 0) {
+                // if out of range, enable tongue prediction
+                enemy.triggeredTongue = 0;
+            }
+
+            if (enemy.triggeredTongue != 0) {
+                // Early return if prediction is disabled
+                return;
+            }
+
+            // Predict state switch to tongue attack:
+            if (!enemy.ai.m_navMeshAgent.isOnOffMeshLink) {
+                // Bail if we are on a off mesh link, otherwise continue with prediction
+
+                if (enemy.ai.m_target != null && enemy.ai.m_target.m_agent == player) {
+                    // Enemy has local player as target
+                    if ((enemy.agent.transform.position - player.transform.position).sqrMagnitude < dist * dist) {
+                        // Tongue is ready...
+
+                        pES_EnemyAttackData fakedata = default;
+                        fakedata.Position = enemy.agent.Position;
+                        fakedata.TargetPosition = player.AimTarget.position;
+                        fakedata.TargetAgent.Set(player);
+                        fakedata.AnimIndex = (byte)enemy.agent.Locomotion.GetUniqueAnimIndex(EnemyLocomotion.s_hashAbilityFires, ref enemy.lastAnimIndex);
+                        fakedata.AbilityType = AgentAbility.Melee;
+
+                        enemy.agent.Locomotion.StrikerAttack.RecieveAttackStart(fakedata);
+
+                        enemy.triggeredTongue = Clock.Time;
+                    }
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.SyncExit))]
+        [HarmonyPostfix]
+        private static void ES_PathMove_SyncExit(ES_PathMove __instance) {
+            if (SNet.IsMaster) return;
+
+            IntPtr ptr = __instance.m_positionBuffer.Pointer;
+
+            if (!map.ContainsKey(ptr)) return;
+
+            EnemyData enemy = map[ptr];
+            enemy.ai.m_navMeshAgent.enabled = false;
         }
 
         private unsafe static Vector3* Patch(Vector3* _Vector3Ptr, IntPtr _thisPtr, float t, Il2CppMethodInfo* _) {
@@ -129,11 +242,13 @@ namespace ClientSidePrediction {
 
             EnemyData enemy = map[_thisPtr];
 
-            //enemy.test.transform.position = *position;
+            // enemy.marker.transform.position = *position;
 
             long now = LatencyTracker.Now;
             float dt = (now - enemy.prevTimestamp) / 1000.0f;
             enemy.prevTimestamp = now;
+
+            lerpFactor = ExpDecay(lerpFactor, 5.0f, 0.5f, dt);
 
             Vector3 dir = *position - enemy.prevPos;
             enemy.prevPos = *position;
@@ -142,15 +257,11 @@ namespace ClientSidePrediction {
 
             enemy.vel = ExpDecay(enemy.vel, dir / dt, lerpFactor, dt);
 
-            *position = *position + enemy.vel * ping;
+            Vector3 target = *position + enemy.vel * ping;
 
-            if (NavMesh.SamplePosition(*position, out var hit, 1f, 1)) {
-                *position = hit.position;
-            }
+            enemy.navMeshAgent.destination = target;
 
-            if (NavMesh.Raycast(*position + Vector3.up, *position + Vector3.down, out hit, 1)) {
-                *position = hit.position;
-            }
+            *position = enemy.navMeshAgent.pathEndPosition;
 
             return position;
         }
