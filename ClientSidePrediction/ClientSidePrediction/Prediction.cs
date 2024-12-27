@@ -31,10 +31,10 @@ namespace ClientSidePrediction {
 
         // Fix glow issue:
         [HarmonyPatch(typeof(Vector4Transition), nameof(Vector4Transition.FeedMaterial))]
-        [HarmonyPostfix]
-        private static void FeedMaterial(Vector4Transition __instance) {
-            if (float.IsNaN(__instance.m_start.x) || float.IsNaN(__instance.m_start.y) || float.IsNaN(__instance.m_start.z) || float.IsNaN(__instance.m_start.w)) {
-                __instance.m_start = Vector4.zero;
+        [HarmonyPrefix]
+        private static void FeedMaterial(Vector4Transition __instance, Il2CppSystem.Collections.Generic.List<ISVA_MaterialHolder> mats, Vector4 value, ref float t) {
+            if (float.IsNaN(t)) {
+                t = 0;
             }
         }
 
