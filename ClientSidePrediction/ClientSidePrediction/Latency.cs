@@ -8,7 +8,12 @@ namespace ClientSidePrediction {
     [HarmonyPatch]
     internal class LatencyTracker : MonoBehaviour {
         private static float ping = 0;
+
+#if !ENABLE_ON_MASTER
         public static float Ping => (SNet.Master == null || SNet.IsMaster) ? 0 : ping / 1000.0f;
+#else
+        public static float Ping => ping / 1000.0f;
+#endif
 
         public static long Now => ((DateTimeOffset)DateTime.Now).ToUnixTimeMilliseconds();
         private static long sendTime = 0;
@@ -54,7 +59,10 @@ namespace ClientSidePrediction {
         [HarmonyPatch(typeof(LocalPlayerAgent), nameof(LocalPlayerAgent.Update))]
         [HarmonyPrefix]
         private static void Update(LocalPlayerAgent __instance) {
+#if !ENABLE_ON_MASTER
             if (SNet.IsMaster) return;
+#endif
+
             if (!running) return;
 
             index = __instance.Owner.PlayerSlotIndex();
@@ -82,7 +90,10 @@ namespace ClientSidePrediction {
         [HarmonyPatch(typeof(SyncedNavMarkerWrapper), nameof(SyncedNavMarkerWrapper.OnStateChange))]
         [HarmonyPrefix]
         private static void OnRecievePingStatus(SyncedNavMarkerWrapper __instance, pNavMarkerState oldState, pNavMarkerState newState, bool isDropinState) {
+#if !ENABLE_ON_MASTER
             if (SNet.IsMaster) return;
+#endif
+
             if (!running) return;
             if (__instance.m_playerIndex != index) return;
 
@@ -119,7 +130,11 @@ namespace ClientSidePrediction {
         [HarmonyWrapSafe]
         [HarmonyPostfix]
         private static void Initialize_Postfix(PUI_LocalPlayerStatus __instance) {
-            __instance.m_pulseText.text += $" | {ping} ms";
+#if !ENABLE_ON_MASTER
+            __instance.m_pulseText.text += $" | {(SNet.IsMaster ? "IsHost" : $"{(int)ping} ms")}";
+#else
+            __instance.m_pulseText.text += $" | {(int)ping} ms";
+#endif
         }
     }
 }

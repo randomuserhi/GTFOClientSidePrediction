@@ -15,6 +15,7 @@ using UnityEngine;
 using UnityEngine.AI;
 
 namespace ClientSidePrediction {
+
     [HarmonyPatch]
     internal class Prediction {
         [HarmonyPatch(typeof(RundownManager), nameof(RundownManager.EndGameSession))]
@@ -78,7 +79,9 @@ namespace ClientSidePrediction {
         [HarmonyPatch(typeof(ES_StrikerAttack), nameof(ES_StrikerAttack.OnAttackWindUp))]
         [HarmonyPrefix]
         private static bool ES_StrikerAttack_OnAttackWindUp(ES_StrikerAttack __instance, int attackIndex, AgentAbility abilityType, int abilityIndex) {
+#if !ENABLE_ON_MASTER
             if (SNet.IsMaster) return true;
+#endif
 
             var pathmove = __instance.m_enemyAgent.Locomotion.PathMove.TryCast<ES_PathMove>();
             if (pathmove == null) return true;
@@ -102,7 +105,10 @@ namespace ClientSidePrediction {
         [HarmonyPatch(typeof(EnemySync), nameof(EnemySync.OnSpawn))]
         [HarmonyPostfix]
         private static void OnSpawn(EnemySync __instance) {
+#if !ENABLE_ON_MASTER
             if (SNet.IsMaster) return;
+#endif
+
             var pathmove = __instance.m_agent.Locomotion.PathMove.TryCast<ES_PathMove>();
             if (pathmove != null) {
                 map.Add(__instance.m_agent.Locomotion.PathMove.Cast<ES_PathMove>().m_positionBuffer.Pointer, new EnemyData(__instance.m_agent));
@@ -112,7 +118,10 @@ namespace ClientSidePrediction {
         [HarmonyPatch(typeof(EnemySync), nameof(EnemySync.OnDespawn))]
         [HarmonyPostfix]
         private static void OnDespawn(EnemySync __instance) {
+#if !ENABLE_ON_MASTER
             if (SNet.IsMaster) return;
+#endif
+
             var pathmove = __instance.m_agent.Locomotion.PathMove.TryCast<ES_PathMove>();
             if (pathmove != null) {
                 map.Remove(pathmove.m_positionBuffer.Pointer);
@@ -121,7 +130,10 @@ namespace ClientSidePrediction {
         [HarmonyPatch(typeof(EnemyBehaviour), nameof(EnemyBehaviour.ChangeState), new Type[] { typeof(EB_States) })]
         [HarmonyPrefix]
         private static void Behaviour_ChangeState(EnemyBehaviour __instance, EB_States state) {
+#if !ENABLE_ON_MASTER
             if (SNet.IsMaster) return;
+#endif
+
             if (__instance.m_currentStateName != state && state == EB_States.Dead) {
                 var pathmove = __instance.m_ai.m_enemyAgent.Locomotion.PathMove.TryCast<ES_PathMove>();
                 if (pathmove != null) {
@@ -149,10 +161,14 @@ namespace ClientSidePrediction {
 
         private static float lerpFactor = 5f;
 
+#if true
+
         [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.RecieveStateData))]
         [HarmonyPrefix]
         private static bool ES_PathMove_RecieveStateData(ES_PathMove __instance, pES_PathMoveData incomingData) {
+#if !ENABLE_ON_MASTER
             if (SNet.IsMaster) return true;
+#endif
 
             float ping = Mathf.Min(LatencyTracker.Ping, 1f) / 2.0f;
             if (ping <= 0) return true;
@@ -178,7 +194,9 @@ namespace ClientSidePrediction {
         [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.SyncEnter))]
         [HarmonyPostfix]
         private static void ES_PathMove_SyncEnter(ES_PathMove __instance) {
+#if !ENABLE_ON_MASTER
             if (SNet.IsMaster) return;
+#endif
 
             IntPtr ptr = __instance.m_positionBuffer.Pointer;
 
@@ -196,7 +214,9 @@ namespace ClientSidePrediction {
         [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.SyncUpdate))]
         [HarmonyPostfix]
         private static void ES_PathMove_SyncUpdate(ES_PathMove __instance) {
+#if !ENABLE_ON_MASTER
             if (SNet.IsMaster) return;
+#endif
 
             IntPtr ptr = __instance.m_positionBuffer.Pointer;
 
@@ -241,10 +261,13 @@ namespace ClientSidePrediction {
             }
         }
 
-        [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.SyncExit))]
+        // NOTE(randomuserhi): Patching SyncExit causes crash with EnemyAnimationFix
+        [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.Exit))]
         [HarmonyPostfix]
-        private static void ES_PathMove_SyncExit(ES_PathMove __instance) {
+        private static void ES_PathMove_Exit(ES_PathMove __instance) {
+#if !ENABLE_ON_MASTER
             if (SNet.IsMaster) return;
+#endif
 
             IntPtr ptr = __instance.m_positionBuffer.Pointer;
 
@@ -254,9 +277,13 @@ namespace ClientSidePrediction {
             enemy.ai.m_navMeshAgent.enabled = false;
         }
 
+#endif
+
         private unsafe static Vector3* Patch(Vector3* _Vector3Ptr, IntPtr _thisPtr, float t, Il2CppMethodInfo* _) {
             Vector3* position = Original_Interpolate(_Vector3Ptr, _thisPtr, t, _);
+#if !ENABLE_ON_MASTER
             if (SNet.IsMaster) return position;
+#endif
 
             if (!map.ContainsKey(_thisPtr)) {
                 return position;
@@ -291,4 +318,5 @@ namespace ClientSidePrediction {
             return position;
         }
     }
+
 }

@@ -25,6 +25,7 @@ namespace ClientSidePrediction {
         [HarmonyPrefix]
         private static void Prefix_SendLocomotion(PlayerSync __instance, PlayerLocomotion.PLOC_State state, ref Vector3 pos, Vector3 lookDir, float velFwd, float velRight) {
             if (SNet.IsMaster) return;
+
             switch (state) {
             case PlayerLocomotion.PLOC_State.OnTerminal:
             case PlayerLocomotion.PLOC_State.Downed:
