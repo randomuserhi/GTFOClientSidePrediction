@@ -309,11 +309,18 @@ namespace ClientSidePrediction {
 
             enemy.vel = ExpDecay(enemy.vel, dir / dt, lerpFactor, dt);
 
-            Vector3 target = *position + Vector3.ClampMagnitude(enemy.vel * ping, 3.0f);
+            const float maxPredictDist = 5.0f;
+
+            Vector3 target = *position + Vector3.ClampMagnitude(enemy.vel * ping, maxPredictDist);
 
             enemy.navMeshAgent.destination = target;
 
             *position = enemy.navMeshAgent.pathEndPosition;
+
+            // Fail safe if enemy is too far from real position
+            if ((*position - enemy.prevPos).sqrMagnitude > maxPredictDist * maxPredictDist) {
+                *position = enemy.prevPos;
+            }
 
             return position;
         }
