@@ -309,7 +309,7 @@ namespace ClientSidePrediction {
 
             enemy.vel = ExpDecay(enemy.vel, dir / dt, lerpFactor, dt);
 
-            Vector3 target = *position + enemy.vel * ping;
+            Vector3 target = *position + Vector3.ClampMagnitude(enemy.vel * ping, 3.0f);
 
             enemy.navMeshAgent.destination = target;
 

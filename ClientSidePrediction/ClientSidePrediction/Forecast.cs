@@ -42,7 +42,7 @@ namespace ClientSidePrediction {
             float ping = Mathf.Min(LatencyTracker.Ping, 1f) / 2.0f;
             if (ping <= 0) return;
 
-            if ((pos - prevPos).sqrMagnitude > 5) {
+            if ((pos - prevPos).sqrMagnitude > 9) {
                 // If moved very far, then must be TP, no forecasting...
                 return;
             }
