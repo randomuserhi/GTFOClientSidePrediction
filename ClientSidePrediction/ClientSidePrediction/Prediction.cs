@@ -318,7 +318,7 @@ namespace ClientSidePrediction {
             *position = enemy.navMeshAgent.pathEndPosition;
 
             // Fail safe if enemy is too far from real position
-            if ((*position - enemy.prevPos).sqrMagnitude > maxPredictDist * maxPredictDist) {
+            if ((*position - enemy.prevPos).sqrMagnitude > maxPredictDist * maxPredictDist + 0.1f) {
                 *position = enemy.prevPos;
             }
 
