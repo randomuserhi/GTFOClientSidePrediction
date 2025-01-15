@@ -59,6 +59,7 @@ namespace ClientSidePrediction {
             public int lastAnimIndex = 0;
             public float triggeredTongue = 0;
             public float lastSound = 0;
+            public bool hasTongue = false;
 
             // public GameObject marker;
 
@@ -67,10 +68,25 @@ namespace ClientSidePrediction {
                 ai = agent.AI;
                 navMeshAgent = agent.AI.m_navMeshAgent.Cast<NavMeshAgentExtention.NavMeshAgentProxy>().m_agent;
 
+                hasTongue = CheckAbilityTypeHasTongue(AgentAbility.Melee);
+                if (!hasTongue) {
+                    hasTongue = CheckAbilityTypeHasTongue(AgentAbility.Ranged);
+                }
+
                 /*marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                 marker.GetComponent<Collider>().enabled = false;
                 marker.transform.localScale = new Vector3(0.5f, 0.5f, 0.5f);
                 marker.GetComponent<MeshRenderer>().material.color = Color.blue;*/
+            }
+
+            private bool CheckAbilityTypeHasTongue(AgentAbility type) {
+                EnemyAbility? ability = agent.Abilities.GetAbility(type);
+                if (ability == null) return false;
+
+                EAB_MovingEnemeyTentacle? tentacle = ability.TryCast<EAB_MovingEnemeyTentacle>();
+                if (tentacle == null) return false;
+
+                return tentacle.m_type == eTentacleEnemyType.Striker;
             }
         }
 
@@ -223,6 +239,9 @@ namespace ClientSidePrediction {
             if (!map.ContainsKey(ptr)) return;
 
             EnemyData enemy = map[ptr];
+
+            if (!enemy.hasTongue) return; // If no tongue ability, early return
+
             PlayerAgent player = PlayerManager.GetLocalPlayerAgent();
 
             float dist = enemy.agent.EnemyBehaviorData.MeleeAttackDistance.Max * 1.05f;
