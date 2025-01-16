@@ -61,6 +61,10 @@ namespace ClientSidePrediction {
             public float lastSound = 0;
             public bool hasTongue = false;
             public AgentAbility type = AgentAbility.Melee;
+            public Vector3 targetPos;
+            public float lerpFactor = Prediction.lerpFactor;
+
+            public long desyncTimestamp = 0;
 
             // public GameObject marker;
 
@@ -74,6 +78,8 @@ namespace ClientSidePrediction {
                     hasTongue = CheckAbilityTypeHasTongue(AgentAbility.Ranged);
                     type = AgentAbility.Ranged;
                 }
+
+                targetPos = agent.transform.position;
 
                 /*marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                 marker.GetComponent<Collider>().enabled = false;
@@ -177,7 +183,7 @@ namespace ClientSidePrediction {
             }
         }
 
-        private static float lerpFactor = 5f;
+        private const float lerpFactor = 5f;
 
 #if true
 
@@ -196,17 +202,47 @@ namespace ClientSidePrediction {
             if (!map.ContainsKey(ptr)) return true;
 
             EnemyData enemy = map[ptr];
-            if (Clock.Time < enemy.triggeredTongue + 3.0f) {
-                long now = LatencyTracker.Now;
-                float dt = (now - enemy.prevTimestamp) / 1000.0f;
-                enemy.prevTimestamp = now;
+            enemy.targetPos = incomingData.Position;
 
-                lerpFactor = 1f;
+            float windupDuration = enemy.agent.Locomotion.AnimHandle.TentacleAttackWindUpLen / enemy.agent.Locomotion.AnimSpeedOrg;
+
+            if (Clock.Time < enemy.triggeredTongue + windupDuration) {
                 __instance.m_positionBuffer.Push(incomingData);
+                enemy.prevTimestamp = LatencyTracker.Now;
+                enemy.prevPos = incomingData.Position;
+
+                // Don't interrupt predicted animation with recieved data
+
                 return false;
             }
 
             return true;
+        }
+        [HarmonyPatch(typeof(ES_EnemyAttackBase), nameof(ES_EnemyAttackBase.SyncFixedUpdate))]
+        [HarmonyPrefix]
+        private static void OnStrikerAttackUpdate(ES_EnemyAttackBase __instance) {
+#if !ENABLE_ON_MASTER
+            if (SNet.IsMaster) return;
+#endif
+            if (__instance.TryCast<ES_StrikerAttack>() == null) return;
+
+            float ping = Mathf.Min(LatencyTracker.Ping, 1f) / 2.0f;
+            if (ping <= 0) return;
+
+            var pathmove = __instance.m_ai.m_enemyAgent.Locomotion.PathMove.TryCast<ES_PathMove>();
+            if (pathmove == null) return;
+
+            IntPtr ptr = pathmove.m_positionBuffer.Pointer;
+
+            if (!map.ContainsKey(ptr)) return;
+
+            EnemyData enemy = map[ptr];
+
+            long now = LatencyTracker.Now;
+            float dt = Mathf.Clamp01((now - enemy.desyncTimestamp) / 1000.0f);
+            enemy.desyncTimestamp = now;
+
+            enemy.agent.transform.position = ExpDecay(enemy.agent.transform.position, enemy.targetPos, 0.5f, dt);
         }
 
         [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.SyncEnter))]
@@ -266,12 +302,18 @@ namespace ClientSidePrediction {
 
                 if (enemy.ai.m_target != null && enemy.ai.m_target.m_agent == player) {
                     // Enemy has local player as target
-                    if ((enemy.agent.transform.position - player.transform.position).sqrMagnitude < dist * dist) {
+                    Vector3 dir = player.transform.position - enemy.agent.transform.position;
+                    if (dir.sqrMagnitude < dist * dist) {
                         // Line of Sight check
-                        enemy.ai.m_detection.UpdateLineOfSightAndOcclusion(enemy.ai.m_target);
-                        if (enemy.ai.m_target.m_hasLineOfSight) {
-                            // Tongue is ready...
+                        Vector3 eyePos = enemy.agent.EyePosition;
+                        dir.y = 0.0001f;
+                        dir.Normalize();
+                        float viewDot = Vector3.Dot(dir.normalized, enemy.agent.transform.forward);
 
+                        bool occluded = Physics.Linecast(eyePos, player.EyePosition, LayerManager.MASK_WORLD);
+
+                        if ((dir.sqrMagnitude < 4 || viewDot > 0.45f) && !occluded) {
+                            // Tongue is ready...
                             pES_EnemyAttackData fakedata = default;
                             fakedata.Position = enemy.agent.Position;
                             fakedata.TargetPosition = player.AimTarget.position;
@@ -281,6 +323,7 @@ namespace ClientSidePrediction {
 
                             enemy.agent.Locomotion.StrikerAttack.RecieveAttackStart(fakedata);
 
+                            enemy.lerpFactor = 1;
                             enemy.triggeredTongue = Clock.Time;
                         }
                     }
@@ -324,17 +367,16 @@ namespace ClientSidePrediction {
             // enemy.marker.transform.position = *position;
 
             long now = LatencyTracker.Now;
-            float dt = (now - enemy.prevTimestamp) / 1000.0f;
+            float dt = Mathf.Clamp01((now - enemy.prevTimestamp) / 1000.0f);
             enemy.prevTimestamp = now;
-
-            lerpFactor = ExpDecay(lerpFactor, 5.0f, 0.5f, dt);
 
             Vector3 dir = *position - enemy.prevPos;
             enemy.prevPos = *position;
 
             if (dt <= 0) return position;
 
-            enemy.vel = ExpDecay(enemy.vel, dir / dt, lerpFactor, dt);
+            enemy.lerpFactor = ExpDecay(enemy.lerpFactor, lerpFactor, 0.5f, dt);
+            enemy.vel = ExpDecay(enemy.vel, dir / dt, enemy.lerpFactor, dt);
 
             const float maxPredictDist = 5.0f;
 
