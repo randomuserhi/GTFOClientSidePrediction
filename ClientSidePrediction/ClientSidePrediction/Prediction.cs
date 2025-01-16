@@ -60,6 +60,7 @@ namespace ClientSidePrediction {
             public float triggeredTongue = 0;
             public float lastSound = 0;
             public bool hasTongue = false;
+            public AgentAbility type = AgentAbility.Melee;
 
             // public GameObject marker;
 
@@ -71,6 +72,7 @@ namespace ClientSidePrediction {
                 hasTongue = CheckAbilityTypeHasTongue(AgentAbility.Melee);
                 if (!hasTongue) {
                     hasTongue = CheckAbilityTypeHasTongue(AgentAbility.Ranged);
+                    type = AgentAbility.Ranged;
                 }
 
                 /*marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
@@ -244,7 +246,9 @@ namespace ClientSidePrediction {
 
             PlayerAgent player = PlayerManager.GetLocalPlayerAgent();
 
-            float dist = enemy.agent.EnemyBehaviorData.MeleeAttackDistance.Max * 1.05f;
+            float dist = (enemy.type == AgentAbility.Melee
+                ? enemy.agent.EnemyBehaviorData.MeleeAttackDistance.Max
+                : enemy.agent.EnemyBehaviorData.RangedAttackDistance.Max) * 1.05f;
             float sqrDist = dist * dist;
             if ((enemy.agent.Position - player.transform.position).sqrMagnitude > sqrDist && enemy.triggeredTongue != 0) {
                 // if out of range, enable tongue prediction
@@ -263,18 +267,22 @@ namespace ClientSidePrediction {
                 if (enemy.ai.m_target != null && enemy.ai.m_target.m_agent == player) {
                     // Enemy has local player as target
                     if ((enemy.agent.transform.position - player.transform.position).sqrMagnitude < dist * dist) {
-                        // Tongue is ready...
+                        // Line of Sight check
+                        enemy.ai.m_detection.UpdateLineOfSightAndOcclusion(enemy.ai.m_target);
+                        if (enemy.ai.m_target.m_hasLineOfSight) {
+                            // Tongue is ready...
 
-                        pES_EnemyAttackData fakedata = default;
-                        fakedata.Position = enemy.agent.Position;
-                        fakedata.TargetPosition = player.AimTarget.position;
-                        fakedata.TargetAgent.Set(player);
-                        fakedata.AnimIndex = (byte)enemy.agent.Locomotion.GetUniqueAnimIndex(EnemyLocomotion.s_hashAbilityFires, ref enemy.lastAnimIndex);
-                        fakedata.AbilityType = AgentAbility.Melee;
+                            pES_EnemyAttackData fakedata = default;
+                            fakedata.Position = enemy.agent.Position;
+                            fakedata.TargetPosition = player.AimTarget.position;
+                            fakedata.TargetAgent.Set(player);
+                            fakedata.AnimIndex = (byte)enemy.agent.Locomotion.GetUniqueAnimIndex(EnemyLocomotion.s_hashAbilityFires, ref enemy.lastAnimIndex);
+                            fakedata.AbilityType = AgentAbility.Melee;
 
-                        enemy.agent.Locomotion.StrikerAttack.RecieveAttackStart(fakedata);
+                            enemy.agent.Locomotion.StrikerAttack.RecieveAttackStart(fakedata);
 
-                        enemy.triggeredTongue = Clock.Time;
+                            enemy.triggeredTongue = Clock.Time;
+                        }
                     }
                 }
             }
