@@ -7,7 +7,7 @@ namespace ClientSidePrediction {
     // TODO(randomuserhi): Fix
     [HarmonyPatch]
     internal class LatencyTracker : MonoBehaviour {
-        private static float ping = 0;
+        internal static float ping = 0;
 
 #if !ENABLE_ON_MASTER
         public static float Ping => (SNet.Master == null || SNet.IsMaster) ? 0 : ping / 1000.0f;

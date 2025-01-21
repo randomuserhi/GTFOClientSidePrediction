@@ -1,5 +1,6 @@
 ﻿using Agents;
 using BepInEx.Unity.IL2CPP.Hook;
+using ClientSidePrediction.BepInEx;
 using Enemies;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
@@ -272,6 +273,10 @@ namespace ClientSidePrediction {
             if (SNet.IsMaster) return;
 #endif
 
+            if ((int)LatencyTracker.ping < ConfigManager.TonguePredictThreshold) {
+                return;
+            }
+
             IntPtr ptr = __instance.m_positionBuffer.Pointer;
 
             if (!map.ContainsKey(ptr)) return;
@@ -286,7 +291,10 @@ namespace ClientSidePrediction {
                 ? enemy.agent.EnemyBehaviorData.MeleeAttackDistance.Max
                 : enemy.agent.EnemyBehaviorData.RangedAttackDistance.Max) * 1.05f;
             float sqrDist = dist * dist;
-            if ((enemy.agent.Position - player.transform.position).sqrMagnitude > sqrDist && enemy.triggeredTongue != 0) {
+
+            Vector3 dir = player.AimTarget.position - enemy.agent.EyePosition;
+
+            if (dir.sqrMagnitude > sqrDist && enemy.triggeredTongue != 0) {
                 // if out of range, enable tongue prediction
                 enemy.triggeredTongue = 0;
             }
@@ -302,7 +310,6 @@ namespace ClientSidePrediction {
 
                 if (enemy.ai.m_target != null && enemy.ai.m_target.m_agent == player) {
                     // Enemy has local player as target
-                    Vector3 dir = player.transform.position - enemy.agent.transform.position;
                     if (dir.sqrMagnitude < dist * dist) {
                         // Line of Sight check
                         Vector3 eyePos = enemy.agent.EyePosition;

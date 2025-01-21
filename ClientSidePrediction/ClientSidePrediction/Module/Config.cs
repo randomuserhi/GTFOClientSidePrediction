@@ -14,6 +14,12 @@ namespace ClientSidePrediction.BepInEx {
                 "enable",
                 false,
                 "Enables debug messages when true.");
+
+            tonguePredictThreshold = configFile.Bind(
+                "Settings",
+                "TonguePredictThreshold",
+                150,
+                "When ping (in ms) exceeds this value enemy tongue windup animations are predicted.");
         }
 
         public static bool Debug {
@@ -21,5 +27,11 @@ namespace ClientSidePrediction.BepInEx {
             set { debug.Value = value; }
         }
         private static ConfigEntry<bool> debug;
+
+        public static int TonguePredictThreshold {
+            get { return tonguePredictThreshold.Value; }
+            set { tonguePredictThreshold.Value = value; }
+        }
+        private static ConfigEntry<int> tonguePredictThreshold;
     }
 }
