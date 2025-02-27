@@ -45,9 +45,12 @@ namespace ClientSidePrediction {
             if (__instance.m_agent.Locomotion.m_input.sqrMagnitude <= 0.01) {
                 // If no movement keys are currently pressed, don't forecast (prevents broken stealth)
 
-                sentPos = pos; // snap to actual position
+                // NOTE(randomuserhi): GTFO has interpolation on the received position which counts towards enemy detection,
+                //                     thus snapping the position does not fully fix the issue, and option (2) may be better.
 
-                // pos = sentPos; // maintain last sent position
+                sentPos = pos; // option 1) snap to actual position
+
+                // pos = sentPos; // option 2) maintain last sent position
 
                 return;
             }
