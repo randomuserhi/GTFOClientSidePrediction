@@ -42,8 +42,19 @@ namespace ClientSidePrediction {
             float ping = Mathf.Min(LatencyTracker.Ping, 1f) / 2.0f;
             if (ping <= 0) return;
 
+            if (__instance.m_agent.Locomotion.m_input.sqrMagnitude <= 0.01) {
+                // If no movement keys are currently pressed, don't forecast (prevents broken stealth)
+
+                sentPos = pos; // snap to actual position
+
+                // pos = sentPos; // maintain last sent position
+
+                return;
+            }
+
             if ((pos - prevPos).sqrMagnitude > 9) {
                 // If moved very far, then must be TP, no forecasting...
+                sentPos = pos;
                 return;
             }
 
