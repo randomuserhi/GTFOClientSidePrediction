@@ -1,4 +1,6 @@
-﻿using HarmonyLib;
+﻿// #define ENABLE_ON_MASTER
+
+using HarmonyLib;
 using Player;
 using SNetwork;
 using UnityEngine;
@@ -7,12 +9,14 @@ namespace ClientSidePrediction {
     // TODO(randomuserhi): Fix
     [HarmonyPatch]
     internal class LatencyTracker : MonoBehaviour {
-        internal static float ping = 0;
 
 #if !ENABLE_ON_MASTER
+        internal static float ping = 0;
         public static float Ping => (SNet.Master == null || SNet.IsMaster) ? 0 : ping / 1000.0f;
 #else
-        public static float Ping => ping / 1000.0f;
+        internal static float _ping = 250;
+        internal static float ping = _ping;
+        public static float Ping => _ping / 1000.0f;
 #endif
 
         public static long Now => ((DateTimeOffset)DateTime.Now).ToUnixTimeMilliseconds();
@@ -59,9 +63,7 @@ namespace ClientSidePrediction {
         [HarmonyPatch(typeof(LocalPlayerAgent), nameof(LocalPlayerAgent.Update))]
         [HarmonyPrefix]
         private static void Update(LocalPlayerAgent __instance) {
-#if !ENABLE_ON_MASTER
             if (SNet.IsMaster) return;
-#endif
 
             if (!running) return;
 
@@ -90,9 +92,7 @@ namespace ClientSidePrediction {
         [HarmonyPatch(typeof(SyncedNavMarkerWrapper), nameof(SyncedNavMarkerWrapper.OnStateChange))]
         [HarmonyPrefix]
         private static void OnRecievePingStatus(SyncedNavMarkerWrapper __instance, pNavMarkerState oldState, pNavMarkerState newState, bool isDropinState) {
-#if !ENABLE_ON_MASTER
             if (SNet.IsMaster) return;
-#endif
 
             if (!running) return;
             if (__instance.m_playerIndex != index) return;

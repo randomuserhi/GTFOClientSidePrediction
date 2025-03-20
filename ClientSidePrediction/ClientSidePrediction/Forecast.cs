@@ -1,7 +1,11 @@
-﻿using HarmonyLib;
+﻿// #define ENABLE_ON_MASTER
+// #define ENABLE_DEBUG_MARKER
+
+using HarmonyLib;
 using Player;
+#if !ENABLE_ON_MASTER
 using SNetwork;
-using System.Runtime.CompilerServices;
+#endif
 using UnityEngine;
 
 namespace ClientSidePrediction {
@@ -14,17 +18,13 @@ namespace ClientSidePrediction {
         private static Vector3 oldVel = Vector3.zero;
         private static CharacterController? characterController = null;
         private static long prevTimestamp = 0;
-        //private static GameObject? marker;
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static Vector3 ExpDecay(Vector3 a, Vector3 b, float decay, float dt) {
-            return b + (a - b) * Mathf.Exp(-decay * dt);
-        }
 
         [HarmonyPatch(typeof(PlayerSync), nameof(PlayerSync.SendLocomotion))]
         [HarmonyPrefix]
         private static void Prefix_SendLocomotion(PlayerSync __instance, PlayerLocomotion.PLOC_State state, ref Vector3 pos, Vector3 lookDir, float velFwd, float velRight) {
+#if !ENABLE_ON_MASTER
             if (SNet.IsMaster) return;
+#endif
 
             switch (state) {
             case PlayerLocomotion.PLOC_State.OnTerminal:
@@ -68,7 +68,7 @@ namespace ClientSidePrediction {
             oldVel = vel;
 
             Vector3 target = pos + vel * ping;
-            sentPos = ExpDecay(sentPos, target, lerpFactor * Mathf.Max((sentPos - target).magnitude, 1.0f), dt);
+            sentPos = pos + vel * ping;
 
             // adjust sent pos based on collision
             if (characterController == null) {
@@ -86,25 +86,22 @@ namespace ClientSidePrediction {
             sentPos = characterController.transform.position;
             characterController.transform.position = prev;
 
-            /*
-            const float height = 1.85f;
-            const float skinDepth = 0.01f;
-            const float radius = 0.5f;
-            RaycastHit hit;
-            if (Physics.CapsuleCast(sentPos + Vector3.up * radius, pos + Vector3.up * (height - radius), radius - skinDepth, slide, out hit, slide.magnitude)) {
-                sentPos = slide.normalized * hit.distance;
-            }
-            */
+            pos = sentPos;
+        }
 
-            /*if (marker == null) {
+#if ENABLE_DEBUG_MARKER
+        private static GameObject? marker;
+        [HarmonyPatch(typeof(PlayerSync), nameof(PlayerSync.SendLocomotion))]
+        [HarmonyPostfix]
+        private static void Postfix_SendLocomotion(PlayerSync __instance, PlayerLocomotion.PLOC_State state, Vector3 pos, Vector3 lookDir, float velFwd, float velRight) {
+            if (marker == null) {
                 marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                 marker.GetComponent<Collider>().enabled = false;
                 marker.transform.localScale = new Vector3(0.5f, 0.5f, 0.5f);
                 marker.GetComponent<MeshRenderer>().material.color = Color.yellow;
             }
-            marker.transform.position = sentPos;*/
-
-            pos = sentPos;
+            marker.transform.position = pos;
         }
+#endif
     }
 }

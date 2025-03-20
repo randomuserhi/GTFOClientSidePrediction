@@ -20,6 +20,12 @@ namespace ClientSidePrediction.BepInEx {
                 "TonguePredictThreshold",
                 150,
                 "When ping (in ms) exceeds this value enemy tongue windup animations are predicted.");
+
+            disableTonguePredictOnEnemiesWithMelee = configFile.Bind(
+                "Settings",
+                "DisableTonguePredictOnEnemiesWithMelee",
+                false,
+                "Disables tongue prediction on enemies that have melee abilities to mitigate desync on mispredict.");
         }
 
         public static bool Debug {
@@ -33,5 +39,11 @@ namespace ClientSidePrediction.BepInEx {
             set { tonguePredictThreshold.Value = value; }
         }
         private static ConfigEntry<int> tonguePredictThreshold;
+
+        public static bool DisableTonguePredictOnEnemiesWithMelee {
+            get { return disableTonguePredictOnEnemiesWithMelee.Value; }
+            set { disableTonguePredictOnEnemiesWithMelee.Value = value; }
+        }
+        private static ConfigEntry<bool> disableTonguePredictOnEnemiesWithMelee;
     }
 }

@@ -1,4 +1,8 @@
-﻿using Agents;
+﻿// #define ENABLE_ON_MASTER
+// #define ENABLE_DEBUG_MARKER
+
+using Agents;
+using API;
 using BepInEx.Unity.IL2CPP.Hook;
 using ClientSidePrediction.BepInEx;
 using Enemies;
@@ -45,11 +49,6 @@ namespace ClientSidePrediction {
             return b + (a - b) * Mathf.Exp(-decay * dt);
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static float ExpDecay(float a, float b, float decay, float dt) {
-            return b + (a - b) * Mathf.Exp(-decay * dt);
-        }
-
         public class EnemyData {
             public EnemyAgent agent;
             public NavMeshAgent navMeshAgent;
@@ -63,11 +62,13 @@ namespace ClientSidePrediction {
             public bool hasTongue = false;
             public AgentAbility type = AgentAbility.Melee;
             public Vector3 targetPos;
-            public float lerpFactor = Prediction.lerpFactor;
+            public uint lastReceivedTick = uint.MaxValue;
 
             public long desyncTimestamp = 0;
 
-            // public GameObject marker;
+#if ENABLE_DEBUG_MARKER
+            public GameObject marker;
+#endif
 
             public EnemyData(EnemyAgent agent) {
                 this.agent = agent;
@@ -80,12 +81,21 @@ namespace ClientSidePrediction {
                     type = AgentAbility.Ranged;
                 }
 
+                if (hasTongue && ConfigManager.DisableTonguePredictOnEnemiesWithMelee) {
+                    if (CheckAbilityTypeHasMelee(AgentAbility.Melee) || CheckAbilityTypeHasMelee(AgentAbility.Ranged)) {
+                        hasTongue = false;
+                        APILogger.Debug("Disabled tongue for enemy as it has a melee ability.");
+                    }
+                }
+
                 targetPos = agent.transform.position;
 
-                /*marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+#if ENABLE_DEBUG_MARKER
+                marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                 marker.GetComponent<Collider>().enabled = false;
                 marker.transform.localScale = new Vector3(0.5f, 0.5f, 0.5f);
-                marker.GetComponent<MeshRenderer>().material.color = Color.blue;*/
+                marker.GetComponent<MeshRenderer>().material.color = Color.blue;
+#endif
             }
 
             private bool CheckAbilityTypeHasTongue(AgentAbility type) {
@@ -96,6 +106,17 @@ namespace ClientSidePrediction {
                 if (tentacle == null) return false;
 
                 return tentacle.m_type == eTentacleEnemyType.Striker;
+            }
+
+            private bool CheckAbilityTypeHasMelee(AgentAbility type) {
+                EnemyAbility? ability = agent.Abilities.GetAbility(type);
+                if (ability == null) return false;
+
+                //EAB_MeleeStrike? melee = ability.TryCast<EAB_MeleeStrike>();
+                EAB_StrikerMelee? melee = ability.TryCast<EAB_StrikerMelee>();
+                if (melee == null) return false;
+
+                return true;
             }
         }
 
@@ -289,7 +310,7 @@ namespace ClientSidePrediction {
 
             float dist = (enemy.type == AgentAbility.Melee
                 ? enemy.agent.EnemyBehaviorData.MeleeAttackDistance.Max
-                : enemy.agent.EnemyBehaviorData.RangedAttackDistance.Max) * 1.05f;
+                : enemy.agent.EnemyBehaviorData.RangedAttackDistance.Max);
             float sqrDist = dist * dist;
 
             Vector3 dir = player.AimTarget.position - enemy.agent.EyePosition;
@@ -330,7 +351,7 @@ namespace ClientSidePrediction {
 
                             enemy.agent.Locomotion.StrikerAttack.RecieveAttackStart(fakedata);
 
-                            enemy.lerpFactor = 1;
+                            //enemy.lerpFactor = 1;
                             enemy.triggeredTongue = Clock.Time;
                         }
                     }
@@ -371,7 +392,11 @@ namespace ClientSidePrediction {
 
             EnemyData enemy = map[_thisPtr];
 
-            // enemy.marker.transform.position = *position;
+            PositionSnapshotBuffer<pES_PathMoveData> snapshotBuffer = new PositionSnapshotBuffer<pES_PathMoveData>(_thisPtr);
+            Il2CppSystem.Collections.Generic.List<pES_PathMoveData> buffer = snapshotBuffer.m_buffer;
+
+            if (enemy.lastReceivedTick == snapshotBuffer.m_lastReceivedTick) return position;
+            enemy.lastReceivedTick = snapshotBuffer.m_lastReceivedTick;
 
             long now = LatencyTracker.Now;
             float dt = Mathf.Clamp01((now - enemy.prevTimestamp) / 1000.0f);
@@ -382,8 +407,7 @@ namespace ClientSidePrediction {
 
             if (dt <= 0) return position;
 
-            enemy.lerpFactor = ExpDecay(enemy.lerpFactor, lerpFactor, 0.5f, dt);
-            enemy.vel = ExpDecay(enemy.vel, dir / dt, enemy.lerpFactor, dt);
+            enemy.vel = dir / dt;
 
             const float maxPredictDist = 5.0f;
 
@@ -391,15 +415,45 @@ namespace ClientSidePrediction {
 
             enemy.navMeshAgent.destination = target;
 
+#if ENABLE_DEBUG_MARKER
+            enemy.marker.transform.position = enemy.navMeshAgent.pathEndPosition;
+#else
             *position = enemy.navMeshAgent.pathEndPosition;
 
             // Fail safe if enemy is too far from real position
-            if ((*position - enemy.prevPos).sqrMagnitude > maxPredictDist * maxPredictDist + 0.1f) {
+            if ((*position - enemy.prevPos).sqrMagnitude > maxPredictDist * maxPredictDist) {
                 *position = enemy.prevPos;
             }
+#endif
 
             return position;
         }
+
+#if ENABLE_DEBUG_MARKER
+        private static EnemyAgent? selectedEnemy = null;
+        [HarmonyPatch(typeof(Dam_EnemyDamageBase), nameof(Dam_EnemyDamageBase.MeleeDamage))]
+        [HarmonyPrefix]
+        public static void Prefix_EnemyReceiveMeleeDamage(Dam_EnemyDamageBase __instance) {
+            if (SNet.IsMaster) return;
+
+            selectedEnemy = __instance.Owner;
+        }
+
+        [HarmonyPatch(typeof(PUI_LocalPlayerStatus), nameof(PUI_LocalPlayerStatus.UpdateBPM))]
+        [HarmonyWrapSafe]
+        [HarmonyPostfix]
+        private static void Initialize_Postfix(PUI_LocalPlayerStatus __instance) {
+            if (SNet.IsMaster) return;
+
+            if (selectedEnemy == null) return;
+
+            IntPtr ptr = selectedEnemy.Locomotion.PathMove.Cast<ES_PathMove>().m_positionBuffer.Pointer;
+            if (!map.ContainsKey(ptr)) return;
+            EnemyData enemy = map[ptr];
+
+            __instance.m_pulseText.text += $" | {enemy.vel.x} {enemy.vel.y} {enemy.vel.z} | {enemy.marker.transform.position.x} {enemy.marker.transform.position.y} {enemy.marker.transform.position.z}";
+        }
+#endif
     }
 
 }
