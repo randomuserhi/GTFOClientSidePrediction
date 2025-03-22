@@ -244,8 +244,6 @@ namespace ClientSidePrediction {
             }
         }
 
-        private const float lerpFactor = 5f;
-
 #if true
 
         [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.RecieveStateData))]
@@ -326,7 +324,6 @@ namespace ClientSidePrediction {
 
             PlayerAgent player = PlayerManager.GetLocalPlayerAgent();
 
-            // NOTE(randomuserhi): Add a small amount of leeway to prediction to make it consistent
             float dist = (enemy.type == AgentAbility.Melee
                 ? enemy.agent.EnemyBehaviorData.MeleeAttackDistance.Max
                 : enemy.agent.EnemyBehaviorData.RangedAttackDistance.Max);
@@ -431,7 +428,7 @@ namespace ClientSidePrediction {
 
             enemy.vel = dir / dt;
 
-            const float maxPredictDist = 5.0f;
+            const float maxPredictDist = 5.0f; // TODO(randomuserhi): Make config option
 
             Vector3 target = *position + Vector3.ClampMagnitude(enemy.vel * ping, maxPredictDist);
 
