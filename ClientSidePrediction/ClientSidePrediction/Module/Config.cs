@@ -24,7 +24,7 @@ namespace ClientSidePrediction.BepInEx {
             disableTonguePredictOnEnemiesWithMelee = configFile.Bind(
                 "Settings",
                 "DisableTonguePredictOnEnemiesWithMelee",
-                false,
+                true,
                 "Disables tongue prediction on enemies that have melee abilities to mitigate desync on mispredict.");
         }
 
