@@ -310,7 +310,7 @@ namespace ClientSidePrediction {
 
             float dist = (enemy.type == AgentAbility.Melee
                 ? enemy.agent.EnemyBehaviorData.MeleeAttackDistance.Max
-                : enemy.agent.EnemyBehaviorData.RangedAttackDistance.Max);
+                : enemy.agent.EnemyBehaviorData.RangedAttackDistance.Max) * 1.05f;
             float sqrDist = dist * dist;
 
             Vector3 dir = player.AimTarget.position - enemy.agent.EyePosition;
