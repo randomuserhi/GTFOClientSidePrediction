@@ -255,7 +255,7 @@ namespace ClientSidePrediction {
             if (SNet.IsMaster) return true;
 #endif
 
-            float ping = Mathf.Min(LatencyTracker.Ping, 1f) / 2.0f;
+            float ping = Mathf.Min(LatencyTracker.Ping, 1f);
             if (ping <= 0) return true;
 
             IntPtr ptr = __instance.m_positionBuffer.Pointer;
@@ -271,7 +271,7 @@ namespace ClientSidePrediction {
                 enemy.prevTimestamp = LatencyTracker.Now;
                 enemy.prevPos = incomingData.Position;
 
-                if (enemy.lastReceivedAttack < 0 && Clock.Time - enemy.triggeredTongue > LatencyTracker.Ping * 1.5f) {
+                if (enemy.lastReceivedAttack < 0 && Clock.Time - enemy.triggeredTongue > ping * 1.5f) {
                     // Check if we did not recieve an actual attack packet after predicted tongue (within expected delay) then
                     // cancel out of tongue animation.
                     APILogger.Debug("Mispredicted tongue animation!");
@@ -329,7 +329,7 @@ namespace ClientSidePrediction {
             // NOTE(randomuserhi): Add a small amount of leeway to prediction to make it consistent
             float dist = (enemy.type == AgentAbility.Melee
                 ? enemy.agent.EnemyBehaviorData.MeleeAttackDistance.Max
-                : enemy.agent.EnemyBehaviorData.RangedAttackDistance.Max) * 1.05f;
+                : enemy.agent.EnemyBehaviorData.RangedAttackDistance.Max);
             float sqrDist = dist * dist;
 
             Vector3 dir = player.AimTarget.position - enemy.agent.EyePosition;
@@ -406,7 +406,10 @@ namespace ClientSidePrediction {
                 return position;
             }
 
-            float ping = Mathf.Min(LatencyTracker.Ping, 1f) / 2.0f;
+            // NOTE(randomuserhi): Use full round trip time instead of ping/2 to account for delay of sending player position
+            //                     back to host. This way you see enemies positions as host would see them relative to ur current
+            //                     position. This is important for interactions such as stopping an attack mid windup.
+            float ping = Mathf.Min(LatencyTracker.Ping, 1f);
             if (ping <= 0) return position;
 
             EnemyPredict enemy = map[_thisPtr];
