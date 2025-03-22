@@ -60,11 +60,7 @@ namespace ClientSidePrediction {
                 sentPos = pos;
                 return;
             }
-
-            if (Vector3.Dot(oldVel, vel) < 0) {
-                // If the player switches direction, reset sent pos to prevent lag in forecast
-                sentPos = pos;
-            }
+            
             oldVel = vel;
 
             Vector3 target = pos + vel * ping;
