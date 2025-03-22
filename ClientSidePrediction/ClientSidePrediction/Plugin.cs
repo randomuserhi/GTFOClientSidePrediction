@@ -19,6 +19,7 @@ public class Plugin : BasePlugin {
         APILogger.Log("Debug is " + (ConfigManager.Debug ? "Enabled" : "Disabled"));
 
         ClassInjector.RegisterTypeInIl2Cpp<LatencyTracker>();
+        ClassInjector.RegisterTypeInIl2Cpp<Prediction.EnemyPredict>();
 
         RundownManager.OnExpeditionGameplayStarted += (Action)LatencyTracker.OnGameplayStarted;
 

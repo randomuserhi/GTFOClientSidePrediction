@@ -19,6 +19,8 @@ using System.Runtime.InteropServices;
 using UnityEngine;
 using UnityEngine.AI;
 
+// TODO(randomuserhi): Cleanup code to use GetComponent on the monobehaviour -> might be faster than pointer lookup?
+
 namespace ClientSidePrediction {
 
     [HarmonyPatch]
@@ -49,17 +51,21 @@ namespace ClientSidePrediction {
             return b + (a - b) * Mathf.Exp(-decay * dt);
         }
 
-        public class EnemyData {
+        public class EnemyPredict : MonoBehaviour {
+#pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor.
             public EnemyAgent agent;
             public NavMeshAgent navMeshAgent;
             public EnemyAI ai;
+#pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor.
+
             public Vector3 prevPos = Vector3.zero;
             public Vector3 vel = Vector3.zero;
             public long prevTimestamp;
             public int lastAnimIndex = 0;
+            public float lastReceivedAttack = 0;
             public float triggeredTongue = 0;
             public float lastSound = 0;
-            public bool hasTongue = false;
+            public bool predictTongue = false;
             public AgentAbility type = AgentAbility.Melee;
             public Vector3 targetPos;
             public uint lastReceivedTick = uint.MaxValue;
@@ -70,20 +76,20 @@ namespace ClientSidePrediction {
             public GameObject marker;
 #endif
 
-            public EnemyData(EnemyAgent agent) {
+            public void Setup(EnemyAgent agent) {
                 this.agent = agent;
                 ai = agent.AI;
                 navMeshAgent = agent.AI.m_navMeshAgent.Cast<NavMeshAgentExtention.NavMeshAgentProxy>().m_agent;
 
-                hasTongue = CheckAbilityTypeHasTongue(AgentAbility.Melee);
-                if (!hasTongue) {
-                    hasTongue = CheckAbilityTypeHasTongue(AgentAbility.Ranged);
+                predictTongue = CheckAbilityTypeHasTongue(AgentAbility.Melee);
+                if (!predictTongue) {
+                    predictTongue = CheckAbilityTypeHasTongue(AgentAbility.Ranged);
                     type = AgentAbility.Ranged;
                 }
 
-                if (hasTongue && ConfigManager.DisableTonguePredictOnEnemiesWithMelee) {
+                if (predictTongue && ConfigManager.DisableTonguePredictOnEnemiesWithMelee) {
                     if (CheckAbilityTypeHasMelee(AgentAbility.Melee) || CheckAbilityTypeHasMelee(AgentAbility.Ranged)) {
-                        hasTongue = false;
+                        predictTongue = false;
                         APILogger.Debug("Disabled tongue for enemy as it has a melee ability.");
                     }
                 }
@@ -96,6 +102,17 @@ namespace ClientSidePrediction {
                 marker.transform.localScale = new Vector3(0.5f, 0.5f, 0.5f);
                 marker.GetComponent<MeshRenderer>().material.color = Color.blue;
 #endif
+            }
+
+            private void FixedUpdate() {
+                // TODO(randomuserhi): Edit slide animation to start slow then speed up (players normally expect enemies to be still during windup animation after all)
+                //                     this way they still get a period of windup anim where the enemy is slow.
+
+                float windupDuration = agent.Locomotion.AnimHandle.TentacleAttackWindUpLen / agent.Locomotion.AnimSpeedOrg;
+                if (Clock.Time < triggeredTongue + windupDuration) {
+                    // Slide enemy to correct location during tongue prediction (in case prediction is incorrect)
+                    agent.transform.position = ExpDecay(agent.transform.position, targetPos, 0.5f, Time.fixedDeltaTime);
+                }
             }
 
             private bool CheckAbilityTypeHasTongue(AgentAbility type) {
@@ -120,7 +137,27 @@ namespace ClientSidePrediction {
             }
         }
 
-        public static Dictionary<IntPtr, EnemyData> map = new Dictionary<IntPtr, EnemyData>();
+        public static Dictionary<IntPtr, EnemyPredict> map = new Dictionary<IntPtr, EnemyPredict>();
+
+        [HarmonyPatch(typeof(ES_StrikerAttack), nameof(ES_StrikerAttack.RecieveAttackStart))]
+        [HarmonyPrefix]
+        private static void ES_StrikerAttack_RecieveAttackStart(ES_StrikerAttack __instance, pES_EnemyAttackData attackData) {
+#if !ENABLE_ON_MASTER
+            if (SNet.IsMaster) return;
+#endif
+
+            var pathmove = __instance.m_enemyAgent.Locomotion.PathMove.TryCast<ES_PathMove>();
+            if (pathmove == null) return;
+            IntPtr ptr = pathmove.m_positionBuffer.Pointer;
+
+            if (!map.ContainsKey(ptr)) return;
+
+            EnemyPredict enemy = map[ptr];
+
+            if (enemy.lastReceivedAttack < 0) return; // NOTE(randomuserhi): Ignore calls due to prediction
+
+            enemy.lastReceivedAttack = Clock.Time;
+        }
 
         [HarmonyPatch(typeof(ES_StrikerAttack), nameof(ES_StrikerAttack.OnAttackWindUp))]
         [HarmonyPrefix]
@@ -136,7 +173,7 @@ namespace ClientSidePrediction {
 
             if (!map.ContainsKey(ptr)) return true;
 
-            EnemyData enemy = map[ptr];
+            EnemyPredict enemy = map[ptr];
             if (Clock.Time < enemy.lastSound + 0.5f) {
                 __instance.m_tentacleAbility = __instance.m_ai.m_enemyAgent.Abilities.GetAbility(abilityType).Cast<EAB_MovingEnemeyTentacle>();
                 __instance.m_locomotion.m_animator.CrossFadeInFixedTime(EnemyLocomotion.s_hashAbilityFires[attackIndex], __instance.m_enemyAgent.EnemyMovementData.BlendIntoAttackAnim);
@@ -157,7 +194,9 @@ namespace ClientSidePrediction {
 
             var pathmove = __instance.m_agent.Locomotion.PathMove.TryCast<ES_PathMove>();
             if (pathmove != null) {
-                map.Add(__instance.m_agent.Locomotion.PathMove.Cast<ES_PathMove>().m_positionBuffer.Pointer, new EnemyData(__instance.m_agent));
+                EnemyPredict data = __instance.m_agent.gameObject.AddComponent<EnemyPredict>();
+                data.Setup(__instance.m_agent);
+                map.Add(__instance.m_agent.Locomotion.PathMove.Cast<ES_PathMove>().m_positionBuffer.Pointer, data);
             }
         }
 
@@ -223,48 +262,27 @@ namespace ClientSidePrediction {
 
             if (!map.ContainsKey(ptr)) return true;
 
-            EnemyData enemy = map[ptr];
+            EnemyPredict enemy = map[ptr];
             enemy.targetPos = incomingData.Position;
 
             float windupDuration = enemy.agent.Locomotion.AnimHandle.TentacleAttackWindUpLen / enemy.agent.Locomotion.AnimSpeedOrg;
-
             if (Clock.Time < enemy.triggeredTongue + windupDuration) {
                 __instance.m_positionBuffer.Push(incomingData);
                 enemy.prevTimestamp = LatencyTracker.Now;
                 enemy.prevPos = incomingData.Position;
 
-                // Don't interrupt predicted animation with recieved data
+                if (enemy.lastReceivedAttack < 0 && Clock.Time - enemy.triggeredTongue > LatencyTracker.Ping * 1.5f) {
+                    // Check if we did not recieve an actual attack packet after predicted tongue (within expected delay) then
+                    // cancel out of tongue animation.
+                    APILogger.Debug("Mispredicted tongue animation!");
+                    return true;
+                }
 
+                // Don't interrupt predicted animation with recieved data
                 return false;
             }
 
             return true;
-        }
-        [HarmonyPatch(typeof(ES_EnemyAttackBase), nameof(ES_EnemyAttackBase.SyncFixedUpdate))]
-        [HarmonyPrefix]
-        private static void OnStrikerAttackUpdate(ES_EnemyAttackBase __instance) {
-#if !ENABLE_ON_MASTER
-            if (SNet.IsMaster) return;
-#endif
-            if (__instance.TryCast<ES_StrikerAttack>() == null) return;
-
-            float ping = Mathf.Min(LatencyTracker.Ping, 1f) / 2.0f;
-            if (ping <= 0) return;
-
-            var pathmove = __instance.m_ai.m_enemyAgent.Locomotion.PathMove.TryCast<ES_PathMove>();
-            if (pathmove == null) return;
-
-            IntPtr ptr = pathmove.m_positionBuffer.Pointer;
-
-            if (!map.ContainsKey(ptr)) return;
-
-            EnemyData enemy = map[ptr];
-
-            long now = LatencyTracker.Now;
-            float dt = Mathf.Clamp01((now - enemy.desyncTimestamp) / 1000.0f);
-            enemy.desyncTimestamp = now;
-
-            enemy.agent.transform.position = ExpDecay(enemy.agent.transform.position, enemy.targetPos, 0.5f, dt);
         }
 
         [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.SyncEnter))]
@@ -278,7 +296,7 @@ namespace ClientSidePrediction {
 
             if (!map.ContainsKey(ptr)) return;
 
-            EnemyData enemy = map[ptr];
+            EnemyPredict enemy = map[ptr];
 
             enemy.prevPos = __instance.m_enemyAgent.Position;
             enemy.prevTimestamp = LatencyTracker.Now;
@@ -302,12 +320,13 @@ namespace ClientSidePrediction {
 
             if (!map.ContainsKey(ptr)) return;
 
-            EnemyData enemy = map[ptr];
+            EnemyPredict enemy = map[ptr];
 
-            if (!enemy.hasTongue) return; // If no tongue ability, early return
+            if (!enemy.predictTongue) return; // If no tongue ability, early return
 
             PlayerAgent player = PlayerManager.GetLocalPlayerAgent();
 
+            // NOTE(randomuserhi): Add a small amount of leeway to prediction to make it consistent
             float dist = (enemy.type == AgentAbility.Melee
                 ? enemy.agent.EnemyBehaviorData.MeleeAttackDistance.Max
                 : enemy.agent.EnemyBehaviorData.RangedAttackDistance.Max) * 1.05f;
@@ -349,9 +368,9 @@ namespace ClientSidePrediction {
                             fakedata.AnimIndex = (byte)enemy.agent.Locomotion.GetUniqueAnimIndex(EnemyLocomotion.s_hashAbilityFires, ref enemy.lastAnimIndex);
                             fakedata.AbilityType = AgentAbility.Melee;
 
+                            enemy.lastReceivedAttack = -1;
                             enemy.agent.Locomotion.StrikerAttack.RecieveAttackStart(fakedata);
 
-                            //enemy.lerpFactor = 1;
                             enemy.triggeredTongue = Clock.Time;
                         }
                     }
@@ -371,7 +390,7 @@ namespace ClientSidePrediction {
 
             if (!map.ContainsKey(ptr)) return;
 
-            EnemyData enemy = map[ptr];
+            EnemyPredict enemy = map[ptr];
             enemy.ai.m_navMeshAgent.enabled = false;
         }
 
@@ -390,7 +409,7 @@ namespace ClientSidePrediction {
             float ping = Mathf.Min(LatencyTracker.Ping, 1f) / 2.0f;
             if (ping <= 0) return position;
 
-            EnemyData enemy = map[_thisPtr];
+            EnemyPredict enemy = map[_thisPtr];
 
             PositionSnapshotBuffer<pES_PathMoveData> snapshotBuffer = new PositionSnapshotBuffer<pES_PathMoveData>(_thisPtr);
             Il2CppSystem.Collections.Generic.List<pES_PathMoveData> buffer = snapshotBuffer.m_buffer;
