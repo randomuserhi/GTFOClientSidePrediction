@@ -50,6 +50,10 @@ namespace ClientSidePrediction {
         private static Vector3 ExpDecay(Vector3 a, Vector3 b, float decay, float dt) {
             return b + (a - b) * Mathf.Exp(-decay * dt);
         }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static float ExpDecay(float a, float b, float decay, float dt) {
+            return b + (a - b) * Mathf.Exp(-decay * dt);
+        }
 
         public class EnemyPredict : MonoBehaviour {
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor.
@@ -70,7 +74,7 @@ namespace ClientSidePrediction {
             public Vector3 targetPos;
             public uint lastReceivedTick = uint.MaxValue;
 
-            public long desyncTimestamp = 0;
+            //public float slideSpeed = 0;
 
 #if ENABLE_DEBUG_MARKER
             public GameObject marker;
@@ -111,7 +115,16 @@ namespace ClientSidePrediction {
                 float windupDuration = agent.Locomotion.AnimHandle.TentacleAttackWindUpLen / agent.Locomotion.AnimSpeedOrg;
                 if (Clock.Time < triggeredTongue + windupDuration) {
                     // Slide enemy to correct location during tongue prediction (in case prediction is incorrect)
-                    agent.transform.position = ExpDecay(agent.transform.position, targetPos, 0.5f, Time.fixedDeltaTime);
+
+                    ai.m_navMeshAgent.enabled = true;
+
+                    //navMeshAgent.destination = ExpDecay(agent.transform.position, targetPos, slideSpeed, Time.fixedDeltaTime);
+                    navMeshAgent.destination = ExpDecay(agent.transform.position, targetPos, 2.5f, Time.fixedDeltaTime);
+                    agent.transform.position = navMeshAgent.pathEndPosition;
+
+                    ai.m_navMeshAgent.enabled = false;
+
+                    //slideSpeed = ExpDecay(slideSpeed, 5f, 2f, Time.fixedDeltaTime);
                 }
             }
 
@@ -139,12 +152,13 @@ namespace ClientSidePrediction {
 
         public static Dictionary<IntPtr, EnemyPredict> map = new Dictionary<IntPtr, EnemyPredict>();
 
-        [HarmonyPatch(typeof(ES_StrikerAttack), nameof(ES_StrikerAttack.RecieveAttackStart))]
+        [HarmonyPatch(typeof(ES_EnemyAttackBase), nameof(ES_EnemyAttackBase.RecieveAttackStart))]
         [HarmonyPrefix]
-        private static void ES_StrikerAttack_RecieveAttackStart(ES_StrikerAttack __instance, pES_EnemyAttackData attackData) {
+        private static void ES_StrikerAttack_RecieveAttackStart(ES_EnemyAttackBase __instance, pES_EnemyAttackData attackData) {
 #if !ENABLE_ON_MASTER
             if (SNet.IsMaster) return;
 #endif
+            if (__instance.TryCast<ES_StrikerAttack>() == null) return;
 
             var pathmove = __instance.m_enemyAgent.Locomotion.PathMove.TryCast<ES_PathMove>();
             if (pathmove == null) return;
@@ -173,9 +187,12 @@ namespace ClientSidePrediction {
 
             if (!map.ContainsKey(ptr)) return true;
 
+            EAB_MovingEnemeyTentacle? tentacle = __instance.m_ai.m_enemyAgent.Abilities.GetAbility(abilityType).TryCast<EAB_MovingEnemeyTentacle>();
+            if (tentacle == null) return true;
+
             EnemyPredict enemy = map[ptr];
             if (Clock.Time < enemy.lastSound + 0.5f) {
-                __instance.m_tentacleAbility = __instance.m_ai.m_enemyAgent.Abilities.GetAbility(abilityType).Cast<EAB_MovingEnemeyTentacle>();
+                __instance.m_tentacleAbility = tentacle;
                 __instance.m_locomotion.m_animator.CrossFadeInFixedTime(EnemyLocomotion.s_hashAbilityFires[attackIndex], __instance.m_enemyAgent.EnemyMovementData.BlendIntoAttackAnim);
                 __instance.m_enemyAgent.Appearance.InterpolateGlow(__instance.m_attackGlowColor, __instance.m_attackGlowLocationEnd, __instance.m_attackWindupDuration * 1.2f);
                 return false;
@@ -264,43 +281,29 @@ namespace ClientSidePrediction {
             enemy.targetPos = incomingData.Position;
 
             float windupDuration = enemy.agent.Locomotion.AnimHandle.TentacleAttackWindUpLen / enemy.agent.Locomotion.AnimSpeedOrg;
-            if (Clock.Time < enemy.triggeredTongue + windupDuration) {
-                __instance.m_positionBuffer.Push(incomingData);
-                enemy.prevTimestamp = LatencyTracker.Now;
-                enemy.prevPos = incomingData.Position;
-
-                if (enemy.lastReceivedAttack < 0 && Clock.Time - enemy.triggeredTongue > ping * 1.5f) {
+            float endTonguePredictTimestamp = enemy.triggeredTongue + windupDuration;
+            if (Clock.Time < endTonguePredictTimestamp) {
+                if (enemy.lastReceivedAttack < 0 && Clock.Time - enemy.triggeredTongue > ping / 2) {
                     // Check if we did not recieve an actual attack packet after predicted tongue (within expected delay) then
                     // cancel out of tongue animation.
                     APILogger.Debug("Mispredicted tongue animation!");
+
+                    // cancel tongue logic
+                    enemy.triggeredTongue = endTonguePredictTimestamp;
+                    enemy.lastReceivedAttack = 0;
+
                     return true;
                 }
+
+                __instance.m_positionBuffer.Push(incomingData);
+                enemy.prevTimestamp = LatencyTracker.Now;
+                enemy.prevPos = incomingData.Position;
 
                 // Don't interrupt predicted animation with recieved data
                 return false;
             }
 
             return true;
-        }
-
-        [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.SyncEnter))]
-        [HarmonyPostfix]
-        private static void ES_PathMove_SyncEnter(ES_PathMove __instance) {
-#if !ENABLE_ON_MASTER
-            if (SNet.IsMaster) return;
-#endif
-
-            IntPtr ptr = __instance.m_positionBuffer.Pointer;
-
-            if (!map.ContainsKey(ptr)) return;
-
-            EnemyPredict enemy = map[ptr];
-
-            enemy.prevPos = __instance.m_enemyAgent.Position;
-            enemy.prevTimestamp = LatencyTracker.Now;
-            enemy.vel = Vector3.zero;
-
-            enemy.ai.m_navMeshAgent.enabled = true;
         }
 
         [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.SyncUpdate))]
@@ -327,11 +330,12 @@ namespace ClientSidePrediction {
             float dist = (enemy.type == AgentAbility.Melee
                 ? enemy.agent.EnemyBehaviorData.MeleeAttackDistance.Max
                 : enemy.agent.EnemyBehaviorData.RangedAttackDistance.Max);
-            float sqrDist = dist * dist;
 
             Vector3 dir = player.AimTarget.position - enemy.agent.EyePosition;
 
-            if (dir.sqrMagnitude > sqrDist && enemy.triggeredTongue != 0) {
+            // Distance enemy needs to be away to reset tongue prediction
+            float resetDistance = dist * 1.05f;
+            if (dir.sqrMagnitude > resetDistance * resetDistance && enemy.triggeredTongue != 0) {
                 // if out of range, enable tongue prediction
                 enemy.triggeredTongue = 0;
             }
@@ -369,26 +373,11 @@ namespace ClientSidePrediction {
                             enemy.agent.Locomotion.StrikerAttack.RecieveAttackStart(fakedata);
 
                             enemy.triggeredTongue = Clock.Time;
+                            //enemy.slideSpeed = 0;
                         }
                     }
                 }
             }
-        }
-
-        // NOTE(randomuserhi): Patching SyncExit causes crash with EnemyAnimationFix
-        [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.Exit))]
-        [HarmonyPostfix]
-        private static void ES_PathMove_Exit(ES_PathMove __instance) {
-#if !ENABLE_ON_MASTER
-            if (SNet.IsMaster) return;
-#endif
-
-            IntPtr ptr = __instance.m_positionBuffer.Pointer;
-
-            if (!map.ContainsKey(ptr)) return;
-
-            EnemyPredict enemy = map[ptr];
-            enemy.ai.m_navMeshAgent.enabled = false;
         }
 
 #endif
@@ -432,12 +421,14 @@ namespace ClientSidePrediction {
 
             Vector3 target = *position + Vector3.ClampMagnitude(enemy.vel * ping, maxPredictDist);
 
+            enemy.ai.m_navMeshAgent.enabled = true;
             enemy.navMeshAgent.destination = target;
 
 #if ENABLE_DEBUG_MARKER
             enemy.marker.transform.position = enemy.navMeshAgent.pathEndPosition;
 #else
             *position = enemy.navMeshAgent.pathEndPosition;
+            enemy.ai.m_navMeshAgent.enabled = false;
 
             // Fail safe if enemy is too far from real position
             if ((*position - enemy.prevPos).sqrMagnitude > maxPredictDist * maxPredictDist) {
