@@ -63,7 +63,6 @@ namespace ClientSidePrediction {
             
             oldVel = vel;
 
-            Vector3 target = pos + vel * ping;
             sentPos = pos + vel * ping;
 
             // adjust sent pos based on collision
