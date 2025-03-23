@@ -80,7 +80,6 @@ namespace ClientSidePrediction {
             public EnemyAI ai;
 #pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor.
 
-            public long prevTimestamp;
             public int lastAnimIndex = 0;
             public float lastReceivedAttack = 0;
             public float triggeredTongue = 0;
@@ -88,13 +87,17 @@ namespace ClientSidePrediction {
             public bool predictTongue = false;
             public AgentAbility type = AgentAbility.Melee;
             public Vector3 targetPos;
+
+#if ENABLE_MOVEMENT_PATCH
+            public long prevTimestamp;
             public uint lastReceivedTick = uint.MaxValue;
+#endif
 
 #if ENABLE_DEBUG_MARKER
             public GameObject marker;
 
             private void OnDestroy() {
-                marker.Destroy();
+                Destroy(marker);
             }
 #endif
 
@@ -127,9 +130,10 @@ namespace ClientSidePrediction {
             }
 
             private void FixedUpdate() {
-                float windupDuration = agent.Locomotion.AnimHandle.TentacleAttackWindUpLen / agent.Locomotion.AnimSpeedOrg;
-                if (Clock.Time < triggeredTongue + windupDuration) {
-                    // Slide enemy to correct location during tongue prediction (in case prediction is incorrect)
+                //float windupDuration = agent.Locomotion.AnimHandle.TentacleAttackWindUpLen / agent.Locomotion.AnimSpeedOrg;
+                //if (Clock.Time < triggeredTongue + windupDuration) {
+                if (agent.Locomotion.CurrentStateEnum != ES_StateEnum.PathMove) {
+                    // Slide enemy to correct location when not in pathmove state (tongue anim / stagger etc...)
                     agent.transform.position = NavMeshMove(navMeshAgent, agent.transform.position, ExpDecay(agent.transform.position, targetPos, 2.5f, Time.fixedDeltaTime));
                 }
             }
@@ -269,6 +273,10 @@ namespace ClientSidePrediction {
             EnemyPredict enemy = map[ptr];
             enemy.targetPos = incomingData.Position;
 
+#if ENABLE_DEBUG_MARKER
+            enemy.marker.transform.position = enemy.targetPos;
+#endif
+
             float windupDuration = enemy.agent.Locomotion.AnimHandle.TentacleAttackWindUpLen / enemy.agent.Locomotion.AnimSpeedOrg;
             float endTonguePredictTimestamp = enemy.triggeredTongue + windupDuration;
             if (Clock.Time < endTonguePredictTimestamp) {
@@ -316,7 +324,7 @@ namespace ClientSidePrediction {
 
             float dist = (enemy.type == AgentAbility.Melee
                 ? enemy.agent.EnemyBehaviorData.MeleeAttackDistance.Max
-                : enemy.agent.EnemyBehaviorData.RangedAttackDistance.Max);
+                : enemy.agent.EnemyBehaviorData.RangedAttackDistance.Max) * 1.05f;
 
             Vector3 dir = player.AimTarget.position - enemy.agent.EyePosition;
 
@@ -441,9 +449,9 @@ namespace ClientSidePrediction {
 
             IntPtr ptr = selectedEnemy.Locomotion.PathMove.Cast<ES_PathMove>().m_positionBuffer.Pointer;
             if (!map.ContainsKey(ptr)) return;
-            EnemyData enemy = map[ptr];
+            EnemyPredict enemy = map[ptr];
 
-            __instance.m_pulseText.text += $" | {enemy.vel.x} {enemy.vel.y} {enemy.vel.z} | {enemy.marker.transform.position.x} {enemy.marker.transform.position.y} {enemy.marker.transform.position.z}";
+            //__instance.m_pulseText.text += $" | {enemy.vel.x} {enemy.vel.y} {enemy.vel.z} | {enemy.marker.transform.position.x} {enemy.marker.transform.position.y} {enemy.marker.transform.position.z}";
         }
 #endif
     }
