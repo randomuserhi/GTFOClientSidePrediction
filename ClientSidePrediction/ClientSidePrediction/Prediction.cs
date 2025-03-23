@@ -1,23 +1,29 @@
 ﻿// #define ENABLE_ON_MASTER
 // #define ENABLE_DEBUG_MARKER
+// #define ENABLE_MOVEMENT_PATCH
 
 using Agents;
 using API;
-using BepInEx.Unity.IL2CPP.Hook;
 using ClientSidePrediction.BepInEx;
 using Enemies;
 using HarmonyLib;
-using Il2CppInterop.Runtime;
-using Il2CppInterop.Runtime.Runtime;
-using Il2CppInterop.Runtime.Runtime.VersionSpecific.Class;
-using Il2CppInterop.Runtime.Runtime.VersionSpecific.MethodInfo;
 using Player;
 using ShaderValueAnimation;
 using SNetwork;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using UnityEngine;
 using UnityEngine.AI;
+
+#if ENABLE_MOVEMENT_PATCH
+
+using BepInEx.Unity.IL2CPP.Hook;
+using Il2CppInterop.Runtime;
+using Il2CppInterop.Runtime.Runtime;
+using Il2CppInterop.Runtime.Runtime.VersionSpecific.Class;
+using Il2CppInterop.Runtime.Runtime.VersionSpecific.MethodInfo;
+using System.Runtime.InteropServices;
+
+#endif
 
 // TODO(randomuserhi): Cleanup code to use GetComponent on the monobehaviour -> might be faster than pointer lookup?
 
@@ -55,6 +61,18 @@ namespace ClientSidePrediction {
             return b + (a - b) * Mathf.Exp(-decay * dt);
         }
 
+        private static Vector3 NavMeshMove(NavMeshAgent agent, Vector3 start, Vector3 target, float maxDistance = 5.0f) {
+            NavMeshHit hit;
+            if (NavMesh.SamplePosition(target, out hit, maxDistance, agent.areaMask)) {
+                Vector3 end = hit.position;
+                if (NavMesh.Raycast(start, end, out hit, agent.areaMask)) {
+                    end = hit.position;
+                }
+                return end;
+            }
+            return start;
+        }
+
         public class EnemyPredict : MonoBehaviour {
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor.
             public EnemyAgent agent;
@@ -62,8 +80,6 @@ namespace ClientSidePrediction {
             public EnemyAI ai;
 #pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor.
 
-            public Vector3 prevPos = Vector3.zero;
-            public Vector3 vel = Vector3.zero;
             public long prevTimestamp;
             public int lastAnimIndex = 0;
             public float lastReceivedAttack = 0;
@@ -74,10 +90,12 @@ namespace ClientSidePrediction {
             public Vector3 targetPos;
             public uint lastReceivedTick = uint.MaxValue;
 
-            //public float slideSpeed = 0;
-
 #if ENABLE_DEBUG_MARKER
             public GameObject marker;
+
+            private void OnDestroy() {
+                marker.Destroy();
+            }
 #endif
 
             public void Setup(EnemyAgent agent) {
@@ -109,22 +127,10 @@ namespace ClientSidePrediction {
             }
 
             private void FixedUpdate() {
-                // TODO(randomuserhi): Edit slide animation to start slow then speed up (players normally expect enemies to be still during windup animation after all)
-                //                     this way they still get a period of windup anim where the enemy is slow.
-
                 float windupDuration = agent.Locomotion.AnimHandle.TentacleAttackWindUpLen / agent.Locomotion.AnimSpeedOrg;
                 if (Clock.Time < triggeredTongue + windupDuration) {
                     // Slide enemy to correct location during tongue prediction (in case prediction is incorrect)
-
-                    ai.m_navMeshAgent.enabled = true;
-
-                    //navMeshAgent.destination = ExpDecay(agent.transform.position, targetPos, slideSpeed, Time.fixedDeltaTime);
-                    navMeshAgent.destination = ExpDecay(agent.transform.position, targetPos, 2.5f, Time.fixedDeltaTime);
-                    agent.transform.position = navMeshAgent.pathEndPosition;
-
-                    ai.m_navMeshAgent.enabled = false;
-
-                    //slideSpeed = ExpDecay(slideSpeed, 5f, 2f, Time.fixedDeltaTime);
+                    agent.transform.position = NavMeshMove(navMeshAgent, agent.transform.position, ExpDecay(agent.transform.position, targetPos, 2.5f, Time.fixedDeltaTime));
                 }
             }
 
@@ -244,23 +250,6 @@ namespace ClientSidePrediction {
             }
         }
 
-        private unsafe static Interpolate Patch_Interpolate = Patch;
-#pragma warning disable CS8618
-        private static Interpolate Original_Interpolate;
-#pragma warning restore CS8618
-        private unsafe delegate Vector3* Interpolate(Vector3* _Vector3Ptr, IntPtr _thisPtr, float t, Il2CppMethodInfo* _);
-
-        public unsafe Prediction() {
-            INativeClassStruct val = UnityVersionHandler.Wrap((Il2CppClass*)(void*)Il2CppClassPointerStore<PositionSnapshotBuffer<pES_PathMoveData>>.NativeClassPtr);
-            for (int i = 0; i < val.MethodCount; i++) {
-                INativeMethodInfoStruct val2 = UnityVersionHandler.Wrap(val.Methods[i]);
-                if (Marshal.PtrToStringAnsi(val2.Name) == nameof(PositionSnapshotBuffer<pES_PathMoveData>.Interpolate)) {
-                    INativeDetour.CreateAndApply(val2.MethodPointer, Patch_Interpolate, out Original_Interpolate);
-                    break;
-                }
-            }
-        }
-
 #if true
 
         [HarmonyPatch(typeof(ES_PathMove), nameof(ES_PathMove.RecieveStateData))]
@@ -296,8 +285,6 @@ namespace ClientSidePrediction {
                 }
 
                 __instance.m_positionBuffer.Push(incomingData);
-                enemy.prevTimestamp = LatencyTracker.Now;
-                enemy.prevPos = incomingData.Position;
 
                 // Don't interrupt predicted animation with recieved data
                 return false;
@@ -373,7 +360,6 @@ namespace ClientSidePrediction {
                             enemy.agent.Locomotion.StrikerAttack.RecieveAttackStart(fakedata);
 
                             enemy.triggeredTongue = Clock.Time;
-                            //enemy.slideSpeed = 0;
                         }
                     }
                 }
@@ -381,6 +367,24 @@ namespace ClientSidePrediction {
         }
 
 #endif
+
+#if ENABLE_MOVEMENT_PATCH
+        private unsafe static Interpolate Patch_Interpolate = Patch;
+#pragma warning disable CS8618
+        private static Interpolate Original_Interpolate;
+#pragma warning restore CS8618
+        private unsafe delegate Vector3* Interpolate(Vector3* _Vector3Ptr, IntPtr _thisPtr, float t, Il2CppMethodInfo* _);
+
+        public unsafe Prediction() {
+            INativeClassStruct val = UnityVersionHandler.Wrap((Il2CppClass*)(void*)Il2CppClassPointerStore<PositionSnapshotBuffer<pES_PathMoveData>>.NativeClassPtr);
+            for (int i = 0; i < val.MethodCount; i++) {
+                INativeMethodInfoStruct val2 = UnityVersionHandler.Wrap(val.Methods[i]);
+                if (Marshal.PtrToStringAnsi(val2.Name) == nameof(PositionSnapshotBuffer<pES_PathMoveData>.Interpolate)) {
+                    INativeDetour.CreateAndApply(val2.MethodPointer, Patch_Interpolate, out Original_Interpolate);
+                    break;
+                }
+            }
+        }
 
         private unsafe static Vector3* Patch(Vector3* _Vector3Ptr, IntPtr _thisPtr, float t, Il2CppMethodInfo* _) {
             Vector3* position = Original_Interpolate(_Vector3Ptr, _thisPtr, t, _);
@@ -392,10 +396,7 @@ namespace ClientSidePrediction {
                 return position;
             }
 
-            // NOTE(randomuserhi): Use full round trip time instead of ping/2 to account for delay of sending player position
-            //                     back to host. This way you see enemies positions as host would see them relative to ur current
-            //                     position. This is important for interactions such as stopping an attack mid windup.
-            float ping = Mathf.Min(LatencyTracker.Ping, 1f);
+            float ping = Mathf.Min(LatencyTracker.Ping, 1f) / 2;
             if (ping <= 0) return position;
 
             EnemyPredict enemy = map[_thisPtr];
@@ -403,41 +404,22 @@ namespace ClientSidePrediction {
             PositionSnapshotBuffer<pES_PathMoveData> snapshotBuffer = new PositionSnapshotBuffer<pES_PathMoveData>(_thisPtr);
             Il2CppSystem.Collections.Generic.List<pES_PathMoveData> buffer = snapshotBuffer.m_buffer;
 
-            if (enemy.lastReceivedTick == snapshotBuffer.m_lastReceivedTick) return position;
+            if (enemy.lastReceivedTick == snapshotBuffer.m_lastReceivedTick) {
+                // Did not receive any new position updates
+                return position;
+            }
             enemy.lastReceivedTick = snapshotBuffer.m_lastReceivedTick;
 
             long now = LatencyTracker.Now;
+            if (enemy.prevTimestamp == 0) enemy.prevTimestamp = now;
             float dt = Mathf.Clamp01((now - enemy.prevTimestamp) / 1000.0f);
             enemy.prevTimestamp = now;
 
-            Vector3 dir = *position - enemy.prevPos;
-            enemy.prevPos = *position;
-
-            if (dt <= 0) return position;
-
-            enemy.vel = dir / dt;
-
-            const float maxPredictDist = 5.0f; // TODO(randomuserhi): Make config option
-
-            Vector3 target = *position + Vector3.ClampMagnitude(enemy.vel * ping, maxPredictDist);
-
-            enemy.ai.m_navMeshAgent.enabled = true;
-            enemy.navMeshAgent.destination = target;
-
-#if ENABLE_DEBUG_MARKER
-            enemy.marker.transform.position = enemy.navMeshAgent.pathEndPosition;
-#else
-            *position = enemy.navMeshAgent.pathEndPosition;
-            enemy.ai.m_navMeshAgent.enabled = false;
-
-            // Fail safe if enemy is too far from real position
-            if ((*position - enemy.prevPos).sqrMagnitude > maxPredictDist * maxPredictDist) {
-                *position = enemy.prevPos;
-            }
-#endif
+            if (dt == 0) return position;
 
             return position;
         }
+#endif
 
 #if ENABLE_DEBUG_MARKER
         private static EnemyAgent? selectedEnemy = null;
