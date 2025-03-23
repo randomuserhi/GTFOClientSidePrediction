@@ -9,7 +9,6 @@ using SNetwork;
 using UnityEngine;
 
 namespace ClientSidePrediction {
-    // TODO(randomuserhi): Fix
     [HarmonyPatch]
     internal class Forecast {
         private static float lerpFactor = 7.5f;
@@ -60,7 +59,7 @@ namespace ClientSidePrediction {
                 sentPos = pos;
                 return;
             }
-            
+
             oldVel = vel;
 
             sentPos = pos + vel * ping;
