@@ -287,7 +287,7 @@ namespace ClientSidePrediction {
             float windupDuration = enemy.agent.Locomotion.AnimHandle.TentacleAttackWindUpLen / enemy.agent.Locomotion.AnimSpeedOrg;
             float endTonguePredictTimestamp = enemy.triggeredTongue + windupDuration;
             if (Clock.Time < endTonguePredictTimestamp) {
-                if (enemy.lastReceivedAttack < 0 && Clock.Time - enemy.triggeredTongue > ping / 2) {
+                if (enemy.lastReceivedAttack < 0 && Clock.Time - enemy.triggeredTongue > ping) {
                     // Check if we did not recieve an actual attack packet after predicted tongue (within expected delay) then
                     // cancel out of tongue animation.
                     APILogger.Debug("Mispredicted tongue animation!");
