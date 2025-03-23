@@ -72,6 +72,7 @@ namespace ClientSidePrediction {
             public bool predictTongue = false;
             public AgentAbility type = AgentAbility.Melee;
             public Vector3 targetPos;
+            public Vector3 lastPredictedPosition;
             public uint lastReceivedTick = uint.MaxValue;
 
             //public float slideSpeed = 0;
@@ -99,6 +100,7 @@ namespace ClientSidePrediction {
                 }
 
                 targetPos = agent.transform.position;
+                lastPredictedPosition = agent.transform.position;
 
 #if ENABLE_DEBUG_MARKER
                 marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
@@ -392,18 +394,25 @@ namespace ClientSidePrediction {
                 return position;
             }
 
+            EnemyPredict enemy = map[_thisPtr];
+
             // NOTE(randomuserhi): Use full round trip time instead of ping/2 to account for delay of sending player position
             //                     back to host. This way you see enemies positions as host would see them relative to ur current
             //                     position. This is important for interactions such as stopping an attack mid windup.
             float ping = Mathf.Min(LatencyTracker.Ping, 1f);
-            if (ping <= 0) return position;
-
-            EnemyPredict enemy = map[_thisPtr];
+            if (ping <= 0) {
+                enemy.lastPredictedPosition = *position;
+                return position;
+            }
 
             PositionSnapshotBuffer<pES_PathMoveData> snapshotBuffer = new PositionSnapshotBuffer<pES_PathMoveData>(_thisPtr);
             Il2CppSystem.Collections.Generic.List<pES_PathMoveData> buffer = snapshotBuffer.m_buffer;
 
-            if (enemy.lastReceivedTick == snapshotBuffer.m_lastReceivedTick) return position;
+            if (enemy.lastReceivedTick == snapshotBuffer.m_lastReceivedTick) {
+                // If no new data has been recieved just use the last predicted position
+                *position = enemy.lastPredictedPosition;
+                return position;
+            }
             enemy.lastReceivedTick = snapshotBuffer.m_lastReceivedTick;
 
             long now = LatencyTracker.Now;
@@ -413,7 +422,10 @@ namespace ClientSidePrediction {
             Vector3 dir = *position - enemy.prevPos;
             enemy.prevPos = *position;
 
-            if (dt <= 0) return position;
+            if (dt <= 0) {
+                enemy.lastPredictedPosition = *position;
+                return position;
+            }
 
             enemy.vel = dir / dt;
 
@@ -436,6 +448,7 @@ namespace ClientSidePrediction {
             }
 #endif
 
+            enemy.lastPredictedPosition = *position;
             return position;
         }
 
