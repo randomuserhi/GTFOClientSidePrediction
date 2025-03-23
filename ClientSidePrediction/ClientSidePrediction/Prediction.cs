@@ -88,10 +88,9 @@ namespace ClientSidePrediction {
             public AgentAbility type = AgentAbility.Melee;
             public Vector3 targetPos;
 
-#if ENABLE_MOVEMENT_PATCH
             public long prevTimestamp;
             public uint lastReceivedTick = uint.MaxValue;
-#endif
+            public Vector3 vel = Vector3.zero;
 
 #if ENABLE_DEBUG_MARKER
             public GameObject marker;
@@ -271,11 +270,19 @@ namespace ClientSidePrediction {
             if (!map.ContainsKey(ptr)) return true;
 
             EnemyPredict enemy = map[ptr];
-            enemy.targetPos = incomingData.Position;
 
-#if ENABLE_DEBUG_MARKER
-            enemy.marker.transform.position = enemy.targetPos;
-#endif
+            if (enemy.lastReceivedTick != incomingData.Tick) {
+                enemy.lastReceivedTick = incomingData.Tick;
+                long now = LatencyTracker.Now;
+                if (enemy.prevTimestamp == 0) enemy.prevTimestamp = now;
+                float dt = (now - enemy.prevTimestamp) / 1000.0f;
+                if (dt > 0) {
+                    enemy.vel = (incomingData.Position - enemy.targetPos) / dt;
+                    enemy.prevTimestamp = now;
+                }
+            }
+
+            enemy.targetPos = incomingData.Position;
 
             float windupDuration = enemy.agent.Locomotion.AnimHandle.TentacleAttackWindUpLen / enemy.agent.Locomotion.AnimSpeedOrg;
             float endTonguePredictTimestamp = enemy.triggeredTongue + windupDuration;
@@ -324,9 +331,16 @@ namespace ClientSidePrediction {
 
             float dist = (enemy.type == AgentAbility.Melee
                 ? enemy.agent.EnemyBehaviorData.MeleeAttackDistance.Max
-                : enemy.agent.EnemyBehaviorData.RangedAttackDistance.Max) * 1.05f;
+                : enemy.agent.EnemyBehaviorData.RangedAttackDistance.Max);
 
-            Vector3 dir = player.AimTarget.position - enemy.agent.EyePosition;
+            float ping = Mathf.Min(LatencyTracker.Ping, 1f) / 2.0f;
+            Vector3 enemyPos = enemy.agent.EyePosition + enemy.vel * ping;
+
+#if ENABLE_DEBUG_MARKER
+            enemy.marker.transform.position = enemyPos;
+#endif
+
+            Vector3 dir = player.AimTarget.position - enemyPos;
 
             // Distance enemy needs to be away to reset tongue prediction
             float resetDistance = dist * 1.05f;
@@ -348,7 +362,7 @@ namespace ClientSidePrediction {
                     // Enemy has local player as target
                     if (dir.sqrMagnitude < dist * dist) {
                         // Line of Sight check
-                        Vector3 eyePos = enemy.agent.EyePosition;
+                        Vector3 eyePos = enemyPos;
                         dir.y = 0.0001f;
                         dir.Normalize();
                         float viewDot = Vector3.Dot(dir.normalized, enemy.agent.transform.forward);
