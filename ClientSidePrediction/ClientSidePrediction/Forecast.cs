@@ -38,7 +38,7 @@ namespace ClientSidePrediction {
             prevPos = pos;
             prevTimestamp = now;
 
-            float ping = Mathf.Min(LatencyTracker.Ping, 1f) / 2.0f;
+            float ping = Mathf.Min(LatencyTracker.Ping, 0.25f) / 2.0f;
             if (ping <= 0) return;
 
             if (__instance.m_agent.Locomotion.m_input.sqrMagnitude <= 0.01) {
