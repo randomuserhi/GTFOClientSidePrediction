@@ -10,7 +10,10 @@ using UnityEngine;
 namespace ClientSidePrediction.BepInEx;
 
 [BepInPlugin(Module.GUID, Module.Name, Module.Version)]
+[BepInDependency(LocaliaCoreGUID, BepInDependency.DependencyFlags.SoftDependency)]
 public class Plugin : BasePlugin {
+    const string LocaliaCoreGUID = "Localia.LocaliaCore";
+
     public override void Load() {
         APILogger.Log("Plugin is loaded!");
         harmony = new Harmony(Module.GUID);
@@ -25,7 +28,11 @@ public class Plugin : BasePlugin {
 
         new GameObject().AddComponent<LatencyTracker>();
         new Prediction();
+
+        hasLocaliaCore = IL2CPPChainloader.Instance.Plugins.TryGetValue(LocaliaCoreGUID, out _);
     }
+
+    public static bool hasLocaliaCore = false;
 
     private static Harmony? harmony;
 }

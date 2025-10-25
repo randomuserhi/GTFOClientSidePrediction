@@ -1,5 +1,6 @@
 ﻿// #define ENABLE_ON_MASTER
 
+using ClientSidePrediction.BepInEx;
 using HarmonyLib;
 using Player;
 using SNetwork;
@@ -11,10 +12,24 @@ namespace ClientSidePrediction {
     internal class LatencyTracker : MonoBehaviour {
 
 #if !ENABLE_ON_MASTER
-        internal static float ping = 0;
+        private static float _ping = 0;
+        internal static float ping {
+            get {
+                if (Plugin.hasLocaliaCore && SNet.Master != null) {
+                    float ping = LocaliaCore.API.Get_Slot_Ping(SNet.Master.PlayerSlotIndex());
+                    if (ping > 0) {
+                        _ping = ping;
+                    }
+                }
+                return _ping;
+            }
+            set {
+                _ping = value;
+            }
+        }
         public static float Ping => (SNet.Master == null || SNet.IsMaster) ? 0 : ping / 1000.0f;
 #else
-        internal static float _ping = 250;
+        private static float _ping = 250;
         internal static float ping = _ping;
         public static float Ping => _ping / 1000.0f;
 #endif
@@ -64,6 +79,7 @@ namespace ClientSidePrediction {
         [HarmonyPrefix]
         private static void Update(LocalPlayerAgent __instance) {
             if (SNet.IsMaster) return;
+            if (Plugin.hasLocaliaCore) return;
 
             if (!running) return;
 
@@ -93,6 +109,7 @@ namespace ClientSidePrediction {
         [HarmonyPrefix]
         private static void OnRecievePingStatus(SyncedNavMarkerWrapper __instance, pNavMarkerState oldState, pNavMarkerState newState, bool isDropinState) {
             if (SNet.IsMaster) return;
+            if (Plugin.hasLocaliaCore) return;
 
             if (!running) return;
             if (__instance.m_playerIndex != index) return;
@@ -123,7 +140,7 @@ namespace ClientSidePrediction {
 
             float target = receiveTime - sendTime;
             const float alpha = 0.5f;
-            ping = Mathf.Clamp(alpha * ping + (1.0f - alpha) * target, 0f, 1000.0f);
+            ping = Mathf.Clamp(alpha * ping + (1.0f - alpha) * target, 0f, 500.0f);
         }
 
         [HarmonyPatch(typeof(PUI_LocalPlayerStatus), nameof(PUI_LocalPlayerStatus.UpdateBPM))]

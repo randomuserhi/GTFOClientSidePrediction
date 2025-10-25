@@ -10,6 +10,7 @@
 		<RootNamespace>$(SolutionName)</RootNamespace>
 		<!-- Bepinex file location -->
 		<BepInEx>E:\GTFO mods\BepInExPack_GTFO\BepInEx</BepInEx>
+		<DotNetFolder>E:\GTFO mods\BepInExPack_GTFO\dotnet</DotNetFolder>
 		<AdditionalIncludes>E:\GTFO mods\BepInEx\Plugins</AdditionalIncludes>
 		<BuildDirectory>E:\GTFO mods\BepInEx\Plugins\$(SolutionName)\</BuildDirectory>
 		<OutputPath>$(BuildDirectory)</OutputPath>
@@ -21,6 +22,9 @@
 	</Target>
 
 	<ItemGroup>
+		<Reference Include="..\..\Dependencies\corlib\*.dll" Private="false" />
+		<Reference Include="..\..\Dependencies\LocaliaCore.dll" Private="false" />
+		<Reference Include="$(DotNetFolder)\System.Private.CoreLib.dll" Private="false" />
 		<Reference Include="$(BepInEx)\core\0Harmony.dll" Private="false" />
 		<Reference Include="$(BepInEx)\core\MonoMod.RuntimeDetour.dll" Private="false" />
 		<Reference Include="$(BepInEx)\core\BepInEx.Core.dll" Private="false" />
