@@ -4,6 +4,7 @@ using ClientSidePrediction.BepInEx;
 using HarmonyLib;
 using Player;
 using SNetwork;
+using System.Runtime.CompilerServices;
 using UnityEngine;
 
 namespace ClientSidePrediction {
@@ -12,27 +13,15 @@ namespace ClientSidePrediction {
     internal class LatencyTracker : MonoBehaviour {
 
 #if !ENABLE_ON_MASTER
-        private static float _ping = 0;
-        internal static float ping {
-            get {
-                if (Plugin.hasLocaliaCore && SNet.Master != null) {
-                    float ping = LocaliaCore.API.Get_Slot_Ping(SNet.Master.PlayerSlotIndex());
-                    if (ping > 0) {
-                        _ping = ping;
-                    }
-                }
-                return _ping;
-            }
-            set {
-                _ping = value;
-            }
-        }
+        internal static float ping = 0;
         public static float Ping => (SNet.Master == null || SNet.IsMaster) ? 0 : ping / 1000.0f;
 #else
-        private static float _ping = 250;
+        private static float _ping = 1000;
         internal static float ping = _ping;
         public static float Ping => _ping / 1000.0f;
 #endif
+        internal static bool isDesynced = false;
+        private static float desyncTimer = 0;
 
         public static long Now => ((DateTimeOffset)DateTime.Now).ToUnixTimeMilliseconds();
         private static long sendTime = 0;
@@ -49,6 +38,7 @@ namespace ClientSidePrediction {
         public static void OnGameplayStarted() {
             timer = 0;
             running = true;
+            isDesynced = false;
             visibleState.status = eNavMarkerStatus.Hidden;
         }
 
@@ -75,11 +65,41 @@ namespace ClientSidePrediction {
             }
         }
 
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static int GetHostPing(int slot) {
+            return LocaliaCore.API.Get_Slot_Ping(slot);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool HasCore(int slot) {
+            return LocaliaCore.API.has_Install_Core(slot);
+        }
+
         [HarmonyPatch(typeof(LocalPlayerAgent), nameof(LocalPlayerAgent.Update))]
         [HarmonyPrefix]
         private static void Update(LocalPlayerAgent __instance) {
             if (SNet.IsMaster) return;
-            if (Plugin.hasLocaliaCore) return;
+            if (SNet.Master == null) return;
+
+            if (ping > 998.0f) {
+                if (desyncTimer > 5.0f) {
+                    isDesynced = true;
+                } else {
+                    desyncTimer += Time.deltaTime;
+                }
+            } else {
+                desyncTimer = 0.0f;
+                isDesynced = false;
+            }
+
+            int slot = SNet.Master.PlayerSlotIndex();
+            if (Plugin.hasLocaliaCore && HasCore(slot)) {
+                float _ping = GetHostPing(slot);
+                if (_ping > 0) {
+                    ping = _ping;
+                    return;
+                }
+            }
 
             if (!running) return;
 
@@ -109,7 +129,9 @@ namespace ClientSidePrediction {
         [HarmonyPrefix]
         private static void OnRecievePingStatus(SyncedNavMarkerWrapper __instance, pNavMarkerState oldState, pNavMarkerState newState, bool isDropinState) {
             if (SNet.IsMaster) return;
-            if (Plugin.hasLocaliaCore) return;
+            if (SNet.Master == null) return;
+            int slot = SNet.Master.PlayerSlotIndex();
+            if (Plugin.hasLocaliaCore && HasCore(slot)) return;
 
             if (!running) return;
             if (__instance.m_playerIndex != index) return;
@@ -140,7 +162,7 @@ namespace ClientSidePrediction {
 
             float target = receiveTime - sendTime;
             const float alpha = 0.5f;
-            ping = Mathf.Clamp(alpha * ping + (1.0f - alpha) * target, 0f, 500.0f);
+            ping = Mathf.Clamp(alpha * ping + (1.0f - alpha) * target, 0f, 999.0f);
         }
 
         [HarmonyPatch(typeof(PUI_LocalPlayerStatus), nameof(PUI_LocalPlayerStatus.UpdateBPM))]
@@ -148,9 +170,9 @@ namespace ClientSidePrediction {
         [HarmonyPostfix]
         private static void Initialize_Postfix(PUI_LocalPlayerStatus __instance) {
 #if !ENABLE_ON_MASTER
-            __instance.m_pulseText.text += $" | {(SNet.IsMaster ? "IsHost" : $"{(int)ping} ms")}";
+            __instance.m_pulseText.text += $" | {(SNet.IsMaster ? "IsHost" : isDesynced ? "Desynced" : $"{(int)ping} ms")}";
 #else
-            __instance.m_pulseText.text += $" | {(int)ping} ms";
+            __instance.m_pulseText.text += $" | {(isDesynced ? "Desynced" : $"{(int)ping} ms")}";
 #endif
         }
     }

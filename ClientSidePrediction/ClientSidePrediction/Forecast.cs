@@ -24,6 +24,7 @@ namespace ClientSidePrediction {
 #if !ENABLE_ON_MASTER
             if (SNet.IsMaster) return;
 #endif
+            if (LatencyTracker.isDesynced) return;
 
             switch (state) {
             case PlayerLocomotion.PLOC_State.OnTerminal:
